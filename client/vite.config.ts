@@ -1,12 +1,13 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Tailwind runs through its Vite plugin. An inline (empty) PostCSS config stops Vite from
   // searching parent folders and picking up an unrelated postcss.config.js outside the repo.
   css: { postcss: { plugins: [] } },
+  test: { environment: 'jsdom', include: ['src/**/*.test.tsx'] },
   server: {
     port: 5173,
     // In development the API runs separately; proxying keeps the browser on one origin.

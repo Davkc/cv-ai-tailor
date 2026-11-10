@@ -125,6 +125,21 @@ export function Progress({ label, hint }: { label: string; hint?: string }) {
   );
 }
 
+export function LoadingSkeleton({ label }: { label: string }) {
+  return (
+    <Card>
+      <div role="status">
+        <span className="sr-only">{label}</span>
+        <div aria-hidden="true" className="space-y-3 motion-safe:animate-pulse">
+          <div className="h-6 w-1/3 rounded-lg bg-slate-200" />
+          <div className="h-12 rounded-xl bg-slate-100" />
+          <div className="h-24 rounded-xl bg-slate-100" />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function LoadingBlock({ label = 'Loading…' }: { label?: string }) {
   return (
     <div role="status" className="flex items-center justify-center gap-3 py-16 text-slate-500">
@@ -173,7 +188,7 @@ function Labelled({ id, label, hint, error, children }: { id: string; label: str
         {label}
       </label>
       {children}
-      {error ? <p className="mt-1 text-xs font-medium text-red-700">{error}</p> : hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
+      {error ? <p id={id + "-description"} className="mt-1 text-xs font-medium text-red-700">{error}</p> : hint ? <p id={id + "-description"} className="mt-1 text-xs text-slate-500">{hint}</p> : null}
     </div>
   );
 }
@@ -189,13 +204,15 @@ interface FieldProps {
   inputMode?: 'text' | 'email' | 'tel' | 'url';
   autoComplete?: string;
   maxLength?: number;
+  name?: string;
+  required?: boolean;
 }
 
 export function Field({ label, value, onChange, hint, error, type = 'text', ...rest }: FieldProps) {
   const id = useId();
   return (
     <Labelled id={id} label={label} hint={hint} error={error}>
-      <input id={id} type={type} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={Boolean(error)} className={`${INPUT} h-12`} {...rest} />
+      <input id={id} type={type} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={Boolean(error)} aria-describedby={error || hint ? id + "-description" : undefined} className={`${INPUT} h-12`} {...rest} />
     </Labelled>
   );
 }
@@ -209,13 +226,15 @@ interface TextAreaProps {
   hint?: string;
   error?: string;
   maxLength?: number;
+  name?: string;
+  required?: boolean;
 }
 
 export function TextArea({ label, value, onChange, rows = 4, hint, error, ...rest }: TextAreaProps) {
   const id = useId();
   return (
     <Labelled id={id} label={label} hint={hint} error={error}>
-      <textarea id={id} rows={rows} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={Boolean(error)} className={`${INPUT} py-3 leading-relaxed`} {...rest} />
+      <textarea id={id} rows={rows} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={Boolean(error)} aria-describedby={error || hint ? id + "-description" : undefined} className={`${INPUT} py-3 leading-relaxed`} {...rest} />
     </Labelled>
   );
 }
@@ -248,7 +267,6 @@ export function ListText({ label, value, onChange, mode, rows, placeholder, hint
       lastSent.current = value;
       setRaw(format(value));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   return (
@@ -286,6 +304,7 @@ interface ConfirmProps {
 
 export function ConfirmDialog({ open, title, children, confirmLabel, danger = false, busy = false, onConfirm, onCancel }: ConfirmProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -296,6 +315,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, danger = fa
   return (
     <dialog
       ref={ref}
+      aria-labelledby={titleId}
       onCancel={(e) => {
         e.preventDefault();
         if (!busy) onCancel();
@@ -303,7 +323,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, danger = fa
       className="m-auto w-[calc(100%-2rem)] max-w-sm rounded-2xl p-0 shadow-xl backdrop:bg-slate-900/50"
     >
       <div className="p-5">
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        <h2 id={titleId} className="text-lg font-semibold text-slate-900">{title}</h2>
         <div className="mt-2 text-sm leading-relaxed text-slate-600">{children}</div>
         <div className="mt-5 grid grid-cols-2 gap-3">
           <Button onClick={onCancel} disabled={busy}>

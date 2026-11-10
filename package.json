@@ -3,14 +3,24 @@
   "version": "1.0.0",
   "private": true,
   "description": "Mobile-first app that tailors a master CV to a job description and exports an ATS-friendly PDF.",
-  "workspaces": ["server", "client"],
-  "engines": { "node": ">=20.12" },
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0 || >=26.0.0"
+  },
   "scripts": {
     "dev:server": "npm run dev -w server",
     "dev:client": "npm run dev -w client",
     "build": "npm run build -w client && npm run build -w server",
     "start": "node server/dist/index.js",
-    "test": "npm test -w server",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w client"
+    "test": "npm test -w server && npm test -w client",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "lint": "eslint client/src client/vite.config.ts server/src server/tests server/scripts server/vitest.config.ts --max-warnings 0"
+  },
+  "devDependencies": {
+    "eslint": "^10.14.0",
+    "typescript-eslint": "^8.72.2"
   }
 }

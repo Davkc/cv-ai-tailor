@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 const tone = (score: number) =>
   score >= 70
@@ -8,8 +8,8 @@ const tone = (score: number) =>
       : { from: '#fb7185', to: '#e11d48', text: 'text-rose-700', label: 'Weak match' };
 
 /** Circular gauge for the estimated match score; animates when it appears or changes. */
-export function ScoreRing({ score, size = 112, label = true }: { score: number; size?: number; label?: boolean }) {
-  const value = Math.max(0, Math.min(100, Math.round(score)));
+export function ScoreRing({ score, size = 112, label = true }: { score: number | null; size?: number; label?: boolean }) {
+  const value = Math.max(0, Math.min(100, Math.round(score ?? 0)));
   const [shown, setShown] = useState(0);
   useEffect(() => {
     const id = requestAnimationFrame(() => setShown(value));
@@ -20,10 +20,10 @@ export function ScoreRing({ score, size = 112, label = true }: { score: number; 
   const r = (size - stroke) / 2;
   const circumference = 2 * Math.PI * r;
   const t = tone(value);
-  const gradientId = `score-${size}-${value}`;
+  const gradientId = useId();
 
   return (
-    <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={`Estimated match ${value} out of 100, ${t.label.toLowerCase()}`}>
+    <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={score === null ? "Match unavailable" : `Estimated match ${value} out of 100, ${t.label.toLowerCase()}`}>
       <svg width={size} height={size} className="-rotate-90">
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
@@ -47,10 +47,10 @@ export function ScoreRing({ score, size = 112, label = true }: { score: number; 
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className={`font-extrabold tabular-nums leading-none ${t.text}`} style={{ fontSize: size / 3.4 }}>
-          {value}
-          <span className="text-[0.45em] font-bold">%</span>
+          {score === null ? '–' : value}
+          {score !== null && <span className="text-[0.45em] font-bold">%</span>}
         </span>
-        {label && size >= 96 && <span className="mt-1 text-[11px] font-semibold text-slate-500">{t.label}</span>}
+        {score !== null && label && size >= 96 && <span className="mt-1 text-[11px] font-semibold text-slate-500">{t.label}</span>}
       </div>
     </div>
   );

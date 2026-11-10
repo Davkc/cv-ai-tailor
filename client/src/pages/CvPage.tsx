@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { scoreMatch } from '../../../server/src/shared/match';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, errorMessage, saveBlob } from '../api';
 import { changesBetween, changesFromMaster, describeChanges, type ChangeSet } from '../changes';
@@ -18,7 +19,7 @@ import {
 } from '../components/editors';
 import { LayoutEditor } from '../components/LayoutEditor';
 import { ScoreRing } from '../components/ScoreRing';
-import { Button, EmptyState, Field, Icon, LoadingBlock, Notice, TextArea, type IconName } from '../components/ui';
+import { Button, EmptyState, Field, Icon, LoadingSkeleton, Notice, TextArea, type IconName } from '../components/ui';
 import { WorkingCard } from '../components/WorkingCard';
 import { ApplicationCard, CoverLetterCard, InterviewCard, LinkedinCard, ShareCard } from '../components/Extras';
 import { notifyIfHidden } from '../notify';
@@ -34,7 +35,7 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'more', label: 'More', icon: 'plus' },
 ];
 
-const REFINE_STEPS = ['Reading your instruction', 'Updating your CV', 'Checking every claim against your master CV', 'Re-scoring the match'];
+const REFINE_STEPS = ['Reading your instruction', 'Updating your CV', 'Checking the rewrite against your master CV', 'Re-scoring the match'];
 
 export function CvPage() {
   const { id = 'new' } = useParams();
@@ -46,6 +47,7 @@ export function CvPage() {
   const top = useRef<HTMLDivElement>(null);
 
   const [tab, setTab] = useState<Tab>('preview');
+  const tabId = useId();
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState<'pdf' | 'save' | 'summary' | 'chat' | 'master' | null>(null);
   const [instruction, setInstruction] = useState('');
@@ -84,7 +86,6 @@ export function CvPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useEffect(() => {
@@ -112,7 +113,6 @@ export function CvPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentKey]);
 
   // Warn before a refresh or tab close discards work that is not in the history yet.
@@ -126,6 +126,8 @@ export function CvPage() {
 
   const fromMaster = useMemo(() => (master && ready ? changesFromMaster(master, draft.content) : null), [master, ready, draft?.content]);
 
+  const liveMatch = useMemo(() => ready ? scoreMatch(draft.job, draft.content) : null, [ready, draft?.job, draft?.content]);
+
   if (loadError) {
     return (
       <div className="space-y-3">
@@ -136,8 +138,8 @@ export function CvPage() {
       </div>
     );
   }
-  if (!ready) {
-    if (!isNew) return <LoadingBlock label="Opening CV…" />;
+  if (!ready || !liveMatch) {
+    if (!isNew) return <LoadingSkeleton label="Opening CV…" />;
     return (
       <EmptyState
         icon="sparkles"
@@ -160,7 +162,7 @@ export function CvPage() {
 
   const goTo = (next: Tab) => {
     setTab(next);
-    top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    top.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   };
 
   function dismissReady() {
@@ -269,10 +271,10 @@ export function CvPage() {
     try {
       const result = await api.refine(before.job, before.content, text);
       const diff = changesBetween(before.content, result.content);
-      const scoreNote =
-        Math.round(result.analysis.score) !== Math.round(before.analysis.score)
-          ? ` Match: ${Math.round(before.analysis.score)}% → ${Math.round(result.analysis.score)}%.`
-          : '';
+      const beforeScore = scoreMatch(before.job, before.content).score;
+      const afterScore = scoreMatch(result.job ?? before.job, result.content).score;
+      const formatScore = (score: number | null) => score === null ? 'unavailable' : score + '%';
+      const scoreNote = beforeScore === afterScore ? '' : ' Match: ' + formatScore(beforeScore) + ' → ' + formatScore(afterScore) + '.';
       setDraft({
         ...before,
         job: result.job,
@@ -363,7 +365,7 @@ export function CvPage() {
             <p className="text-sm text-white/85">{job.company || 'Company not specified'}</p>
           </div>
           <button type="button" onClick={() => goTo('match')} className="rounded-full bg-white p-1 shadow-md" aria-label="Open job match">
-            <ScoreRing score={draft.analysis.score} size={74} label={false} />
+            <ScoreRing score={liveMatch.score} size={74} label={false} />
           </button>
         </div>
         <div className="relative mt-3 flex flex-wrap gap-1.5 text-xs font-semibold">
@@ -394,7 +396,7 @@ export function CvPage() {
           <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
             <div className="rounded-xl bg-white p-2 shadow-sm">
               <dt className="text-[11px] font-medium text-slate-500">Match</dt>
-              <dd className="text-lg font-extrabold text-slate-900">{Math.round(draft.analysis.score)}%</dd>
+              <dd className="text-lg font-extrabold text-slate-900">{liveMatch.score === null ? '—' : liveMatch.score + '%'}</dd>
             </div>
             <div className="rounded-xl bg-white p-2 shadow-sm">
               <dt className="text-[11px] font-medium text-slate-500">Bullets rewritten</dt>
@@ -404,7 +406,7 @@ export function CvPage() {
             </div>
             <div className="rounded-xl bg-white p-2 shadow-sm">
               <dt className="text-[11px] font-medium text-slate-500">Job keywords</dt>
-              <dd className="text-lg font-extrabold text-slate-900">{draft.analysis.keywordsIncluded.length}</dd>
+              <dd className="text-lg font-extrabold text-slate-900">{liveMatch.matched.length}</dd>
             </div>
           </dl>
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -449,14 +451,25 @@ export function CvPage() {
 
       {/* ---------- tabs ---------- */}
       <div role="tablist" aria-label="CV views" className="sticky top-14 z-20 -mx-1 grid grid-cols-5 gap-1 rounded-2xl border border-white/70 bg-white/85 p-1 shadow-sm backdrop-blur">
-        {TABS.map((item) => (
+        {TABS.map((item, index) => (
           <button
             key={item.id}
             type="button"
             role="tab"
+            id={tabId + "-" + item.id}
+            aria-controls={tabId + "-panel"}
             aria-selected={tab === item.id}
+            tabIndex={tab === item.id ? 0 : -1}
+            onKeyDown={(event) => {
+              const nextIndex = { ArrowLeft: (index + TABS.length - 1) % TABS.length, ArrowRight: (index + 1) % TABS.length, Home: 0, End: TABS.length - 1 };
+              const next = TABS[nextIndex[event.key as keyof typeof nextIndex]];
+              if (!next) return;
+              event.preventDefault();
+              setTab(next.id);
+              document.getElementById(tabId + "-" + next.id)?.focus();
+            }}
             onClick={() => setTab(item.id)}
-            className={`flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-bold transition-colors ${tab === item.id ? 'bg-gradient-to-br from-brand-600 to-violet-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+            className={`flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 ${tab === item.id ? 'bg-gradient-to-br from-brand-600 to-violet-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
           >
             <Icon name={item.icon} className="h-4 w-4" />
             {item.label}
@@ -466,165 +479,168 @@ export function CvPage() {
 
       {busy === 'chat' && tab !== 'ai' && <WorkingCard title="Updating your CV" steps={REFINE_STEPS} hint="usually 10–40 seconds" stepSeconds={5} />}
 
-      {tab === 'preview' && (
-        <div className="animate-rise space-y-3">
-          <div className="flex items-center justify-between gap-3 rounded-xl bg-white/80 px-3 py-2 shadow-sm">
-            <p className="text-xs leading-snug text-slate-600">
-              {highlight ? (
-                <>
-                  <span className="mr-1 inline-block h-3 w-3 rounded-sm bg-emerald-200 align-middle ring-1 ring-emerald-300" />
-                  {lastChange ? 'What the AI just changed' : 'Written or reworded by the AI'}
-                </>
-              ) : (
-                'Highlighting is off'
-              )}
-            </p>
-            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
-              Show changes
-              <input type="checkbox" className="peer sr-only" checked={highlight} onChange={(e) => setHighlight(e.target.checked)} />
-              <span className="relative h-6 w-11 rounded-full bg-slate-300 transition-colors peer-checked:bg-emerald-500 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5" />
-            </label>
+      <div role="tabpanel" id={tabId + "-panel"} aria-labelledby={tabId + "-" + tab}>
+        {tab === 'preview' && (
+          <div className="animate-rise space-y-3">
+            <div className="flex items-center justify-between gap-3 rounded-xl bg-white/80 px-3 py-2 shadow-sm">
+              <p className="text-xs leading-snug text-slate-600">
+                {highlight ? (
+                  <>
+                    <span className="mr-1 inline-block h-3 w-3 rounded-sm bg-emerald-200 align-middle ring-1 ring-emerald-300" />
+                    {lastChange ? 'What the AI just changed' : 'Written or reworded by the AI'}
+                  </>
+                ) : (
+                  'Highlighting is off'
+                )}
+              </p>
+              <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
+                Show changes
+                <input type="checkbox" className="peer sr-only" checked={highlight} onChange={(e) => setHighlight(e.target.checked)} />
+                <span className="relative h-6 w-11 rounded-full bg-slate-300 transition-colors peer-checked:bg-emerald-500 after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5" />
+              </label>
+            </div>
+            {lastChange && highlight && (
+              <button type="button" onClick={() => setLastChange(null)} className="text-xs font-semibold text-brand-700 underline underline-offset-2">
+                Show all changes compared with my master CV instead
+              </button>
+            )}
+            <div className="rounded-2xl bg-white/85 p-3 shadow-sm">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">Design</p>
+                {pages !== null && (
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${pages <= 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>
+                    {pages} page{pages === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="PDF design">
+                {DESIGN_OPTIONS.map((d) => {
+                  const selected = (content.design ?? 'professional') === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      title={d.hint}
+                      onClick={() => setContent({ design: d.id as Design })}
+                      className={`min-h-11 rounded-xl px-1 text-xs font-bold transition ${selected ? 'bg-gradient-to-br from-brand-600 to-violet-600 text-white shadow' : 'bg-slate-50 text-slate-700 ring-1 ring-slate-200'}`}
+                    >
+                      {d.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-2.5 grid grid-cols-2 gap-2">
+                <Button size="sm" icon="sparkles" onClick={fitToOnePage} loading={fitting} disabled={busy !== null || fitting || pages === 1}>
+                  {pages === 1 ? 'Fits on 1 page' : 'Fit on one page'}
+                </Button>
+                <Button size="sm" icon="download" onClick={downloadWord} loading={wordBusy} disabled={wordBusy}>
+                  Word (.docx)
+                </Button>
+              </div>
+            </div>
+            {fitting && <WorkingCard title="Fitting your CV on one page" steps={['Choosing what matters most for this job', 'Tightening the wording', 'Checking the page count']} hint="usually 10–40 seconds" stepSeconds={6} />}
+            <CvPreview content={content} changes={shownChanges} />
+            <p className="text-center text-xs text-slate-500">The PDF uses exactly this content and order. Green highlighting is never printed.</p>
           </div>
-          {lastChange && highlight && (
-            <button type="button" onClick={() => setLastChange(null)} className="text-xs font-semibold text-brand-700 underline underline-offset-2">
-              Show all changes compared with my master CV instead
-            </button>
-          )}
-          <div className="rounded-2xl bg-white/85 p-3 shadow-sm">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">Design</p>
-              {pages !== null && (
-                <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${pages <= 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>
-                  {pages} page{pages === 1 ? '' : 's'}
-                </span>
-              )}
-            </div>
-            <div className="mt-2 grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="PDF design">
-              {DESIGN_OPTIONS.map((d) => {
-                const selected = (content.design ?? 'professional') === d.id;
-                return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    title={d.hint}
-                    onClick={() => setContent({ design: d.id as Design })}
-                    className={`min-h-11 rounded-xl px-1 text-xs font-bold transition ${selected ? 'bg-gradient-to-br from-brand-600 to-violet-600 text-white shadow' : 'bg-slate-50 text-slate-700 ring-1 ring-slate-200'}`}
-                  >
-                    {d.name}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-2.5 grid grid-cols-2 gap-2">
-              <Button size="sm" icon="sparkles" onClick={fitToOnePage} loading={fitting} disabled={busy !== null || fitting || pages === 1}>
-                {pages === 1 ? 'Fits on 1 page' : 'Fit on one page'}
+        )}
+
+        {tab === 'ai' && (
+          <div className="animate-rise space-y-3">
+            <AiChat
+              aiConfigured={aiOn}
+              messages={draft.chat ?? []}
+              value={instruction}
+              onChange={setInstruction}
+              onSend={() => void sendInstruction()}
+              busy={busy === 'chat'}
+              disabled={busy !== null}
+              inputRef={chatInput}
+              onAttachSample={(file) => void restyleFromSample(file)}
+            />
+            <div className="grid grid-cols-2 gap-2.5">
+              <Button icon="refresh" size="sm" onClick={regenerateSummary} loading={busy === 'summary'} disabled={busy !== null}>
+                New summary
               </Button>
-              <Button size="sm" icon="download" onClick={downloadWord} loading={wordBusy} disabled={wordBusy}>
-                Word (.docx)
+              <Button icon="plus" size="sm" onClick={() => navigate('/tailor')} disabled={busy !== null}>
+                Another job
               </Button>
             </div>
           </div>
-          {fitting && <WorkingCard title="Fitting your CV on one page" steps={['Choosing what matters most for this job', 'Tightening the wording', 'Checking the page count']} hint="usually 10–40 seconds" stepSeconds={6} />}
-          <CvPreview content={content} changes={shownChanges} />
-          <p className="text-center text-xs text-slate-500">The PDF uses exactly this content and order. Green highlighting is never printed.</p>
-        </div>
-      )}
+        )}
 
-      {tab === 'ai' && (
-        <div className="animate-rise space-y-3">
-          <AiChat
-            aiConfigured={aiOn}
-            messages={draft.chat ?? []}
-            value={instruction}
-            onChange={setInstruction}
-            onSend={() => void sendInstruction()}
-            busy={busy === 'chat'}
-            disabled={busy !== null}
-            inputRef={chatInput}
-            onAttachSample={(file) => void restyleFromSample(file)}
-          />
-          <div className="grid grid-cols-2 gap-2.5">
-            <Button icon="refresh" size="sm" onClick={regenerateSummary} loading={busy === 'summary'} disabled={busy !== null}>
-              New summary
-            </Button>
-            <Button icon="plus" size="sm" onClick={() => navigate('/tailor')} disabled={busy !== null}>
-              Another job
+        {tab === 'more' && (
+          <div className="animate-rise space-y-3">
+            <ApplicationCard
+              key={draft.id ?? 'new'}
+              versionId={draft.id}
+              value={draft.application}
+              onSaved={(application) => setDraft({ ...draft, application })}
+            />
+            <CoverLetterCard draft={draft} aiOn={aiOn} onChange={(coverLetter) => editDraft((d) => ({ ...d, coverLetter }))} />
+            <InterviewCard draft={draft} aiOn={aiOn} onChange={(interviewPrep) => editDraft((d) => ({ ...d, interviewPrep }))} />
+            <ShareCard versionId={draft.id} share={draft.share} onChange={(share) => setDraft({ ...draft, share })} />
+            <LinkedinCard aiOn={aiOn} target={[job.title, job.emphasis].filter(Boolean).join(', ')} />
+          </div>
+        )}
+
+        {tab === 'match' && (
+          <div className="animate-rise">
+            <AnalysisPanel
+              analysis={draft.analysis}
+              match={liveMatch}
+              onBoost={aiOn ? (text) => void sendInstruction(text, 'match') : undefined}
+              boosting={busy === 'chat'}
+            />
+          </div>
+        )}
+
+        {tab === 'edit' && (
+          <div key={editorKey} className="animate-rise space-y-3">
+            <Notice>Edits apply to this CV only. Your master CV and other saved versions are not changed.</Notice>
+            <Section title="Application details">
+              <Field label="Job title" value={job.title} onChange={(title) => setJob({ title })} maxLength={160} />
+              <Field label="Company" value={job.company} onChange={(company) => setJob({ company })} maxLength={160} />
+            </Section>
+            <Section title="Professional summary" defaultOpen>
+              <TextArea label="Summary" rows={6} value={content.summary} onChange={(summary) => setContent({ summary })} maxLength={3000} />
+            </Section>
+            <Section title="Skills" count={content.skills.technical.length + content.skills.soft.length}>
+              <SkillsFields value={content.skills} onChange={(skills) => setContent({ skills })} />
+            </Section>
+            <Section title="Experience" count={content.experience.length} defaultOpen>
+              <CvExperienceList items={content.experience} onChange={(experience) => setContent({ experience })} />
+            </Section>
+            <Section title="Projects" count={content.projects.length}>
+              <ProjectList items={content.projects} onChange={(projects) => setContent({ projects })} />
+            </Section>
+            <Section title="Education" count={content.education.length}>
+              <EducationList items={content.education} onChange={(education) => setContent({ education })} />
+            </Section>
+            <Section title="Certifications and training" count={content.certifications.length}>
+              <CertificationList items={content.certifications} onChange={(certifications) => setContent({ certifications })} />
+            </Section>
+            <Section title="Volunteer experience" count={content.volunteer.length}>
+              <VolunteerList items={content.volunteer} onChange={(volunteer) => setContent({ volunteer })} />
+            </Section>
+            <Section title="Languages" count={content.languages.length}>
+              <LanguageList items={content.languages} onChange={(languages) => setContent({ languages })} />
+            </Section>
+            <Section title="Contact details">
+              <ContactFields value={content.contact} onChange={(contact) => setContent({ contact })} />
+            </Section>
+            <Section title="Structure: section order and headings">
+              <p className="text-sm leading-relaxed text-slate-600">Applies to this CV only. Set your default structure on the Master CV page.</p>
+              <LayoutEditor value={content.layout} onChange={(layout) => setContent({ layout })} />
+            </Section>
+            <Button variant="primary" icon="eye" className="w-full" onClick={() => goTo('preview')}>
+              Preview changes
             </Button>
           </div>
-        </div>
-      )}
+        )}
 
-      {tab === 'more' && (
-        <div className="animate-rise space-y-3">
-          <ApplicationCard
-            key={draft.id ?? 'new'}
-            versionId={draft.id}
-            value={draft.application}
-            onSaved={(application) => setDraft({ ...draft, application })}
-          />
-          <CoverLetterCard draft={draft} aiOn={aiOn} onChange={(coverLetter) => editDraft((d) => ({ ...d, coverLetter }))} />
-          <InterviewCard draft={draft} aiOn={aiOn} onChange={(interviewPrep) => editDraft((d) => ({ ...d, interviewPrep }))} />
-          <ShareCard versionId={draft.id} share={draft.share} onChange={(share) => setDraft({ ...draft, share })} />
-          <LinkedinCard aiOn={aiOn} target={[job.title, job.emphasis].filter(Boolean).join(', ')} />
-        </div>
-      )}
-
-      {tab === 'match' && (
-        <div className="animate-rise">
-          <AnalysisPanel
-            analysis={draft.analysis}
-            generatedBy={draft.generatedBy}
-            onBoost={aiOn ? (text) => void sendInstruction(text, 'match') : undefined}
-            boosting={busy === 'chat'}
-          />
-        </div>
-      )}
-
-      {tab === 'edit' && (
-        <div key={editorKey} className="animate-rise space-y-3">
-          <Notice>Edits apply to this CV only. Your master CV and other saved versions are not changed.</Notice>
-          <Section title="Application details">
-            <Field label="Job title" value={job.title} onChange={(title) => setJob({ title })} maxLength={160} />
-            <Field label="Company" value={job.company} onChange={(company) => setJob({ company })} maxLength={160} />
-          </Section>
-          <Section title="Professional summary" defaultOpen>
-            <TextArea label="Summary" rows={6} value={content.summary} onChange={(summary) => setContent({ summary })} maxLength={3000} />
-          </Section>
-          <Section title="Skills" count={content.skills.technical.length + content.skills.soft.length}>
-            <SkillsFields value={content.skills} onChange={(skills) => setContent({ skills })} />
-          </Section>
-          <Section title="Experience" count={content.experience.length} defaultOpen>
-            <CvExperienceList items={content.experience} onChange={(experience) => setContent({ experience })} />
-          </Section>
-          <Section title="Projects" count={content.projects.length}>
-            <ProjectList items={content.projects} onChange={(projects) => setContent({ projects })} />
-          </Section>
-          <Section title="Education" count={content.education.length}>
-            <EducationList items={content.education} onChange={(education) => setContent({ education })} />
-          </Section>
-          <Section title="Certifications and training" count={content.certifications.length}>
-            <CertificationList items={content.certifications} onChange={(certifications) => setContent({ certifications })} />
-          </Section>
-          <Section title="Volunteer experience" count={content.volunteer.length}>
-            <VolunteerList items={content.volunteer} onChange={(volunteer) => setContent({ volunteer })} />
-          </Section>
-          <Section title="Languages" count={content.languages.length}>
-            <LanguageList items={content.languages} onChange={(languages) => setContent({ languages })} />
-          </Section>
-          <Section title="Contact details">
-            <ContactFields value={content.contact} onChange={(contact) => setContent({ contact })} />
-          </Section>
-          <Section title="Structure: section order and headings">
-            <p className="text-sm leading-relaxed text-slate-600">Applies to this CV only. Set your default structure on the Master CV page.</p>
-            <LayoutEditor value={content.layout} onChange={(layout) => setContent({ layout })} />
-          </Section>
-          <Button variant="primary" icon="eye" className="w-full" onClick={() => goTo('preview')}>
-            Preview changes
-          </Button>
-        </div>
-      )}
+      </div>
 
       <p className="pt-2 text-center text-sm">
         <Link to="/" className="font-medium text-brand-700 underline underline-offset-2">

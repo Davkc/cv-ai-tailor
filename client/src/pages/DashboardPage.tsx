@@ -31,7 +31,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setError('');[[]]
+    setError('');
     api
       .dashboard()
       .then((d) => !cancelled && setData(d))

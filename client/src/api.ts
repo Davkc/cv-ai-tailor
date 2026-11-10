@@ -89,8 +89,8 @@ async function send(path: string, init: RequestInit = {}): Promise<Response> {
   return response;
 }
 
-async function json<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const response = await send(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+async function json<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await send(path, { method, body: body === undefined ? undefined : JSON.stringify(body), signal });
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
@@ -98,51 +98,6 @@ type VersionBody = Pick<TailorResult, 'job' | 'content' | 'analysis' | 'generate
   coverLetter?: string;
   interviewPrep?: InterviewPrep | null;
 };
-
-// ---------- automatic retry when the AI provider is busy ----------
-
-const BUSY = new Set(['ai_provider_error', 'ai_rate_limited', 'ai_timeout', 'ai_unreachable']);
-const RETRY_DELAYS = [6, 15];
-type RetryListener = (seconds: number | null) => void;
-const retryListeners = new Set<RetryListener>();
-
-/** Subscribe to "retrying in N seconds" notices (null when a retry starts or the call ends). */
-export function onAiRetry(listener: RetryListener): () => void {
-  retryListeners.add(listener);
-  return () => retryListeners.delete(listener);
-}
-
-const wait = (seconds: number) =>
-  new Promise<void>((resolve) => {
-    let left = seconds;
-    retryListeners.forEach((l) => l(left));
-    const timer = setInterval(() => {
-      left -= 1;
-      retryListeners.forEach((l) => l(left > 0 ? left : null));
-      if (left <= 0) {
-        clearInterval(timer);
-        resolve();
-      }
-    }, 1000);
-  });
-
-/**
- * Free AI tiers are often briefly overloaded. Instead of showing an error straight away,
- * wait and try again twice; the server has already tried its backup models by then.
- */
-async function withAiRetry<T>(call: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await call();
-    } catch (err) {
-      const delay = RETRY_DELAYS[attempt];
-      if (!(err instanceof ApiError) || !BUSY.has(err.code) || delay === undefined) throw err;
-      await wait(delay);
-    } finally {
-      retryListeners.forEach((l) => l(null));
-    }
-  }
-}
 
 async function download(path: string, body: unknown, fallbackName: string, method = 'POST'): Promise<{ blob: Blob; filename: string }> {
   const response = await send(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -193,11 +148,11 @@ export const api = {
   },
 
   refine: (job: Job, content: CvContent, instruction: string) =>
-    withAiRetry(() => json<RefineResult>('/tailor/refine', 'POST', { job, content, instruction })),
+    json<RefineResult>('/tailor/refine', 'POST', { job, content, instruction }),
 
-  tailor: (job: Job) => withAiRetry(() => json<TailorResult>('/tailor', 'POST', job)),
+  tailor: (job: Job, signal?: AbortSignal) => json<TailorResult>('/tailor', 'POST', job, signal),
   regenerateSummary: (job: Job, currentSummary: string) =>
-    withAiRetry(() => json<{ summary: string; generatedBy: 'ai' | 'demo'; warnings: string[] }>('/tailor/summary', 'POST', { job, currentSummary })),
+    json<{ summary: string; generatedBy: 'ai' | 'demo'; warnings: string[] }>('/tailor/summary', 'POST', { job, currentSummary }),
 
   listVersions: () => json<{ versions: VersionSummary[] }>('/versions'),
   getVersion: (id: string) => json<{ version: Version }>(`/versions/${encodeURIComponent(id)}`),
@@ -207,12 +162,12 @@ export const api = {
   deleteAllData: () => json<{ deletedVersions: number }>('/data', 'DELETE'),
 
   coverLetter: (job: Job, content: CvContent, analysis: Analysis, tone: LetterTone) =>
-    withAiRetry(() => json<{ letter: string; warnings: string[]; aiModel: string }>('/documents/cover-letter', 'POST', { job, content, analysis, tone })),
+    json<{ letter: string; warnings: string[]; aiModel: string }>('/documents/cover-letter', 'POST', { job, content, analysis, tone }),
   interview: (job: Job, content: CvContent, analysis: Analysis) =>
-    withAiRetry(() => json<{ prep: InterviewPrep; warnings: string[]; aiModel: string }>('/documents/interview', 'POST', { job, content, analysis })),
-  linkedin: (target: string) => withAiRetry(() => json<{ linkedin: LinkedinProfile; warnings: string[] }>('/documents/linkedin', 'POST', { target })),
+    json<{ prep: InterviewPrep; warnings: string[]; aiModel: string }>('/documents/interview', 'POST', { job, content, analysis }),
+  linkedin: (target: string) => json<{ linkedin: LinkedinProfile; warnings: string[] }>('/documents/linkedin', 'POST', { target }),
   onePage: (job: Job, content: CvContent, analysis: Analysis) =>
-    withAiRetry(() => json<RefineResult & { pages: number }>('/documents/one-page', 'POST', { job, content, analysis })),
+    json<RefineResult & { pages: number }>('/documents/one-page', 'POST', { job, content, analysis }),
   pageCount: (content: CvContent) => json<{ pages: number }>('/pdf/info', 'POST', { content }),
 
   setApplication: (id: string, application: Application) =>
