@@ -1,3 +1,4 @@
+import { extractKeywords, scoreMatch } from '../shared/match.js';
 import {
   analysisSchema,
   cvContentSchema,
@@ -8,44 +9,11 @@ import {
   type Profile,
 } from '../schemas.js';
 import { normalizeProfile } from './normalizeProfile.js';
-import { containsTerm, profileFacts, verbatimBullets } from './safeguards.js';
+import { containsTerm, verbatimBullets } from './safeguards.js';
 
 // Demo mode: used only when no AI API key is configured. Nothing here calls a model and the
 // result is always labelled generatedBy: "demo". Text is copied from the master profile
 // unchanged and merely reordered by keyword overlap with the job description.
-
-/** Common requirement terms, used to spot things a job asks for that the profile lacks. */
-const KNOWN_TERMS = [
-  // general and office
-  'Microsoft Office', 'Microsoft Excel', 'Microsoft Word', 'PowerPoint', 'Google Workspace', 'Data Entry', 'Record Keeping',
-  'Customer Service', 'Communication', 'Teamwork', 'Leadership', 'Time Management', 'Problem Solving', 'Report Writing',
-  'Project Management', 'Budgeting', 'Scheduling', 'Negotiation', 'Presentation', 'Training', 'Supervision', 'Mentoring',
-  // finance, sales and retail
-  'Accounting', 'Bookkeeping', 'QuickBooks', 'Sage', 'Payroll', 'Auditing', 'Taxation', 'IFRS', 'Financial Reporting',
-  'Sales', 'Business Development', 'CRM', 'Salesforce', 'Cash Handling', 'Point of Sale', 'Inventory Management', 'Merchandising',
-  'Marketing', 'Digital Marketing', 'Social Media', 'SEO', 'Content Writing', 'Copywriting', 'Public Relations', 'Event Planning',
-  // health, education, hospitality and trades
-  'Patient Care', 'Nursing', 'First Aid', 'CPR', 'Infection Control', 'Medication Administration', 'Pharmacy',
-  'Teaching', 'Lesson Planning', 'Curriculum Development', 'Classroom Management', 'Tutoring',
-  'Food Safety', 'Food Hygiene', 'Housekeeping', 'Front Desk', 'Reservations', 'Barista',
-  'Health and Safety', 'Driving Licence', 'Forklift', 'Warehouse', 'Procurement', 'Supply Chain', 'Logistics',
-  'Recruitment', 'Onboarding', 'Employee Relations', 'Monitoring and Evaluation', 'Grant Writing', 'Fundraising',
-  'Research', 'Laboratory', 'Quality Assurance', 'Quality Control', 'AutoCAD', 'Graphic Design', 'Adobe Photoshop', 'Video Editing',
-  // technology
-  'JavaScript', 'TypeScript', 'Python', 'Java', 'C#', 'C++', 'Golang', 'Rust', 'PHP', 'Ruby', 'Kotlin', 'Swift', 'Scala',
-  'React', 'Angular', 'Vue', 'Next.js', 'Svelte', 'Redux', 'Tailwind CSS', 'HTML', 'CSS', 'Sass',
-  'Node.js', 'Express', 'NestJS', 'Django', 'Flask', 'FastAPI', 'Spring Boot', '.NET', 'Laravel', 'Ruby on Rails',
-  'REST', 'GraphQL', 'gRPC', 'Microservices', 'WebSockets', 'OAuth', 'JWT',
-  'SQL', 'PostgreSQL', 'MySQL', 'SQL Server', 'Oracle', 'MongoDB', 'Redis', 'Elasticsearch', 'DynamoDB', 'Cassandra',
-  'AWS', 'Azure', 'GCP', 'Google Cloud', 'Docker', 'Kubernetes', 'Terraform', 'Ansible', 'Jenkins', 'GitHub Actions',
-  'GitLab CI', 'CI/CD', 'Linux', 'Bash', 'Git', 'Nginx', 'Prometheus', 'Grafana', 'Kafka', 'RabbitMQ',
-  'Machine Learning', 'Deep Learning', 'NLP', 'LLM', 'TensorFlow', 'PyTorch', 'scikit-learn', 'Pandas', 'NumPy',
-  'Data Analysis', 'Data Engineering', 'ETL', 'Airflow', 'Spark', 'Hadoop', 'Snowflake', 'BigQuery', 'dbt',
-  'Power BI', 'Tableau', 'Excel', 'Looker', 'Statistics', 'A/B Testing',
-  'Agile', 'Scrum', 'Kanban', 'Jira', 'TDD', 'Unit Testing', 'Jest', 'Cypress', 'Selenium', 'Playwright',
-  'Payments', 'Mobile Money', 'Core Banking', 'KYC', 'AML', 'PCI DSS', 'ISO 27001', 'Open Banking', 'Blockchain',
-  'Cybersecurity', 'Penetration Testing', 'Networking', 'Active Directory', 'ITIL', 'Flutter', 'React Native', 'Android', 'iOS',
-];
 
 const countHits = (text: string, terms: string[]) => {
   const lower = text.toLowerCase();
@@ -61,13 +29,8 @@ function byRelevance<T>(items: T[], textOf: (item: T) => string, terms: string[]
 }
 
 export function demoTailor(profile: Profile, job: Job, layout?: Layout): { content: CvContent; analysis: Analysis } {
-  const facts = profileFacts(profile);
-  const jd = `${job.title}\n${job.description}`.toLowerCase();
-
-  const own = [...new Set([...profile.skills.technical, ...profile.skills.soft, ...profile.projects.flatMap((p) => p.technologies)])];
-  const matched = own.filter((skill) => containsTerm(jd, skill));
-  const missing = KNOWN_TERMS.filter((term) => containsTerm(jd, term) && !facts.supports(term));
-  const isMatched = (skill: string) => matched.includes(skill);
+  const jobTerms = extractKeywords(job).map(({ keyword }) => keyword);
+  const isMatched = (skill: string) => containsTerm(job.description.toLowerCase(), skill);
 
   const content = cvContentSchema.parse({
     contact: profile.contact,
@@ -83,9 +46,9 @@ export function demoTailor(profile: Profile, job: Job, layout?: Layout): { conte
       location: exp.location,
       startDate: exp.startDate,
       endDate: exp.endDate,
-      bullets: byRelevance(verbatimBullets(exp, 40), (b) => b, matched).slice(0, 6),
+      bullets: byRelevance(verbatimBullets(exp, 40), (b) => b, jobTerms).slice(0, 6),
     })),
-    projects: byRelevance(profile.projects, (p) => `${p.name} ${p.description} ${p.technologies.join(' ')}`, matched).slice(0, 4),
+    projects: byRelevance(profile.projects, (p) => `${p.name} ${p.description} ${p.technologies.join(' ')}`, jobTerms).slice(0, 4),
     education: profile.education,
     certifications: profile.certifications,
     volunteer: profile.volunteer,
@@ -94,13 +57,15 @@ export function demoTailor(profile: Profile, job: Job, layout?: Layout): { conte
   });
 
   const relevant = profile.experience
-    .map((exp) => ({ exp, hits: countHits([...exp.responsibilities, ...exp.achievements, exp.title].join(' '), matched) }))
+    .map((exp) => ({ exp, hits: countHits([...exp.responsibilities, ...exp.achievements, exp.title].join(' '), jobTerms) }))
     .filter((x) => x.hits > 0)
     .sort((a, b) => b.hits - a.hits)
     .slice(0, 4)
     .map(({ exp, hits }) => `${[exp.title, exp.organization].filter(Boolean).join(' at ')} (mentions ${hits} of the job's keywords)`);
 
-  const total = matched.length + missing.length;
+  const match = scoreMatch(job, content);
+  const matched = match.matched.slice(0, 80).map(({ keyword }) => keyword);
+  const missing = match.missing.slice(0, 80).map(({ keyword }) => keyword);
   const suggestions = [
     'Add an AI API key on the server (see the README) to get a rewritten summary and achievement-focused bullet points.',
   ];
@@ -110,7 +75,8 @@ export function demoTailor(profile: Profile, job: Job, layout?: Layout): { conte
   if (!profile.summary) suggestions.push('Your master profile has no professional summary. Add one so it can appear on your CV.');
 
   const analysis = analysisSchema.parse({
-    score: total === 0 ? 0 : Math.min(95, Math.round((matched.length / total) * 100)),
+    score: match.score ?? 0,
+    keywordCount: match.matched.length + match.missing.length,
     matchedSkills: matched,
     missingSkills: missing,
     relevantExperience: relevant,
@@ -118,7 +84,7 @@ export function demoTailor(profile: Profile, job: Job, layout?: Layout): { conte
     suggestions,
     flags: [
       'Demo mode: no AI model was used. The wording is copied from your master CV unchanged and only reordered by keyword overlap with the job description.',
-      ...(total === 0 ? ['No recognisable skill keywords were found in the job description, so the score could not be estimated.'] : []),
+      ...(match.score === null ? ['No recognisable skill keywords were found in the job description, so the score could not be estimated.'] : []),
     ],
   });
 

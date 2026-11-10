@@ -1,3 +1,4 @@
+import { withMatchScore } from '../services/matchAnalysis.js';
 import { Router, type Request, type RequestHandler } from 'express';
 import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
@@ -236,7 +237,7 @@ export function apiRouter(config: Config): Router {
     const [profileDoc, totalVersions, recent, pipeline] = await Promise.all([
       MasterProfile.findOne({ ownerId }).lean(),
       TailoredCv.countDocuments({ ownerId }),
-      TailoredCv.find({ ownerId }).sort({ createdAt: -1 }).limit(3).select('job.title job.company job.emphasis generatedBy analysis.score application createdAt').lean(),
+      TailoredCv.find({ ownerId }).sort({ createdAt: -1 }).limit(3).select('job.title job.company job.emphasis generatedBy analysis.score analysis.keywordCount application createdAt').lean(),
       TailoredCv.aggregate<{ _id: string | null; n: number }>([
         { $match: { ownerId: new mongoose.Types.ObjectId(ownerId) } },
         { $group: { _id: '$application.status', n: { $sum: 1 } } },
@@ -268,13 +269,14 @@ export function apiRouter(config: Config): Router {
     const versions = await TailoredCv.find({ ownerId: ownerIdOf(req) })
       .sort({ createdAt: -1 })
       .limit(200)
-      .select('job.title job.company job.emphasis generatedBy analysis.score application createdAt updatedAt')
+      .select('job.title job.company job.emphasis generatedBy analysis.score analysis.keywordCount application createdAt updatedAt')
       .lean();
     res.json({ versions: versions.map(summarise) });
   });
 
   router.post('/versions', async (req, res) => {
     const input = versionInputSchema.parse(req.body);
+    input.analysis = withMatchScore(input.job, input.content, input.analysis);
     const doc = await TailoredCv.create({ ...input, ownerId: ownerIdOf(req) });
     res.status(201).json({ version: full(doc.toObject()) });
   });
@@ -287,6 +289,7 @@ export function apiRouter(config: Config): Router {
 
   router.put('/versions/:id', async (req, res) => {
     const input = versionInputSchema.parse(req.body);
+    input.analysis = withMatchScore(input.job, input.content, input.analysis);
     const doc = await TailoredCv.findOneAndUpdate(
       { _id: versionId(req), ownerId: ownerIdOf(req) },
       { $set: input },
@@ -314,7 +317,7 @@ type LeanVersion = {
   _id: unknown;
   job: { title: string; company?: string; emphasis?: string; description?: string; url?: string };
   generatedBy: string;
-  analysis?: { score?: number };
+  analysis?: { score?: number; keywordCount?: number };
   application?: { status?: string; appliedAt?: string; notes?: string };
   createdAt: Date;
   updatedAt?: Date;
@@ -326,7 +329,7 @@ function summarise(doc: LeanVersion) {
     jobTitle: doc.job.title,
     company: doc.job.company ?? '',
     emphasis: doc.job.emphasis ?? '',
-    score: typeof doc.analysis?.score === 'number' ? Math.round(doc.analysis.score) : undefined,
+    score: doc.analysis?.keywordCount !== 0 && typeof doc.analysis?.score === 'number' ? Math.round(doc.analysis.score) : undefined,
     status: doc.application?.status ?? 'not_applied',
     appliedAt: doc.application?.appliedAt ?? '',
     generatedBy: doc.generatedBy,

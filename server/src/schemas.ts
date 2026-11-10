@@ -1,3 +1,5 @@
+import { SECTION_KEYS, type JobDescription, type ResumeSection, type SectionKey } from './shared/types.js';
+export { SECTION_KEYS, type SectionKey } from './shared/types.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
@@ -148,18 +150,6 @@ export type Design = (typeof DESIGNS)[number];
 
 // ---------- CV structure (section order and heading names) ----------
 
-export const SECTION_KEYS = [
-  'summary',
-  'skills',
-  'experience',
-  'projects',
-  'education',
-  'certifications',
-  'volunteer',
-  'languages',
-] as const;
-export type SectionKey = (typeof SECTION_KEYS)[number];
-
 export const DEFAULT_SECTION_TITLES: Record<SectionKey, string> = {
   summary: 'Professional Summary',
   skills: 'Skills',
@@ -171,11 +161,7 @@ export const DEFAULT_SECTION_TITLES: Record<SectionKey, string> = {
   languages: 'Languages',
 };
 
-export interface LayoutSection {
-  key: SectionKey;
-  title: string;
-  hidden: boolean;
-}
+export type LayoutSection = ResumeSection;
 export interface Layout {
   sections: LayoutSection[];
 }
@@ -219,7 +205,7 @@ export const jobSchema = z.object({
   /** The candidate's own guidance for this CV ("keep it to one page", "stress my API work"). */
   instructions: text(2000),
 });
-export type Job = z.infer<typeof jobSchema>;
+export type Job = JobDescription;
 
 export const cvExperienceSchema = z.object({
   id: itemId,
@@ -271,6 +257,7 @@ export type Requirement = z.infer<typeof requirementSchema>;
 
 export const analysisSchema = z.object({
   score: z.number().min(0).max(100).default(0),
+  keywordCount: z.number().int().nonnegative().optional(),
   requirements: z.array(requirementSchema).max(40).default([]),
   matchedSkills: list(80, 120),
   missingSkills: list(80, 120),

@@ -1,3 +1,5 @@
+import type { JobDescription, ResumeSection, SectionKey } from '../../server/src/shared/types';
+export { SECTION_KEYS, type SectionKey, type MatchResult, type KeywordGap } from '../../server/src/shared/types';
 // Mirrors the server's zod schemas (server/src/schemas.ts).
 
 export interface Contact {
@@ -110,15 +112,7 @@ export const EMPHASES = [
 ];
 export type Emphasis = string;
 
-export interface Job {
-  title: string;
-  company: string;
-  description: string;
-  url: string;
-  emphasis: Emphasis;
-  /** Your own guidance to the AI for this CV. */
-  instructions: string;
-}
+export type Job = JobDescription;
 
 export interface CvExperience {
   id: string;
@@ -130,8 +124,6 @@ export interface CvExperience {
   bullets: string[];
 }
 
-export const SECTION_KEYS = ['summary', 'skills', 'experience', 'projects', 'education', 'certifications', 'volunteer', 'languages'] as const;
-export type SectionKey = (typeof SECTION_KEYS)[number];
 
 /** What each section holds, whatever heading it is given. */
 export const SECTION_NAMES: Record<SectionKey, string> = {
@@ -145,11 +137,7 @@ export const SECTION_NAMES: Record<SectionKey, string> = {
   languages: 'Languages',
 };
 
-export interface LayoutSection {
-  key: SectionKey;
-  title: string;
-  hidden: boolean;
-}
+export type LayoutSection = ResumeSection;
 
 /** Section order and heading names of a CV. */
 export interface Layout {
@@ -187,6 +175,7 @@ export interface Requirement {
 
 export interface Analysis {
   score: number;
+  keywordCount?: number;
   /** Absent on CVs saved before the checklist existed. */
   requirements?: Requirement[];
   matchedSkills: string[];

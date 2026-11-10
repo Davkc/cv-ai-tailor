@@ -1,3 +1,4 @@
+import { withMatchScore } from './matchAnalysis.js';
 import { z } from 'zod';
 import { aiConfigured, type Config } from '../config.js';
 import { HttpError } from '../errors.js';
@@ -50,8 +51,10 @@ export async function tailorCv(config: Config, profile: Profile, job: Job, layou
     user: tailorUserPrompt(profile, job),
     schema: aiTailorSchema,
   });
+  const { content, analysis } = applySafeguards(profile, data, { layout, instructions: job.instructions });
   return {
-    ...applySafeguards(profile, data, { layout, instructions: job.instructions }),
+    content,
+    analysis: withMatchScore(job, content, analysis),
     generatedBy: 'ai',
     aiModel: model,
   };
@@ -109,6 +112,7 @@ export async function refineCv(
   const refined = applyRefinement(profile, current, instruction, data);
   return {
     ...refined,
+    analysis: withMatchScore(job, refined.content, refined.analysis),
     reply: data.reply || 'Done.',
     generatedBy: 'ai',
     aiModel: model,
@@ -144,7 +148,7 @@ export async function restyleCv(
     return {
       job,
       content: structured,
-      analysis,
+      analysis: withMatchScore(job, structured, analysis),
       generatedBy: 'demo',
       aiModel: '',
       reply: `${structureNote} Copying its writing style needs an AI provider.`,
@@ -155,7 +159,7 @@ export async function restyleCv(
   const refined = await refineCv(config, profile, job, structured, RESTYLE_INSTRUCTION, sampleText.slice(0, 15_000));
   // The model may suggest an order of its own; the sample's order wins.
   const content = found > 0 ? { ...refined.content, layout } : refined.content;
-  return { ...refined, content, reply: `${refined.reply} ${structureNote}`.trim(), sectionsFound: found };
+  return { ...refined, content, analysis: withMatchScore(job, content, refined.analysis), reply: `${refined.reply} ${structureNote}`.trim(), sectionsFound: found };
 }
 
 export interface SummaryResult {
@@ -258,7 +262,7 @@ export interface OnePageResult extends RefineResult {
 export async function fitOnePage(config: Config, profile: Profile, job: Job, current: CvContent, analysis: Analysis): Promise<OnePageResult> {
   const before = await renderCvPdfWithInfo(current);
   if (before.pages <= 1) {
-    return { job, content: current, analysis, generatedBy: aiConfigured(config) ? 'ai' : 'demo', aiModel: '', reply: 'It already fits on one page.', newSkills: [], pages: 1 };
+    return { job, content: current, analysis: withMatchScore(job, current, analysis), generatedBy: aiConfigured(config) ? 'ai' : 'demo', aiModel: '', reply: 'It already fits on one page.', newSkills: [], pages: 1 };
   }
 
   let result: RefineResult = { job, content: current, analysis, generatedBy: 'demo', aiModel: '', reply: '', newSkills: [] };
@@ -274,5 +278,5 @@ export async function fitOnePage(config: Config, profile: Profile, job: Job, cur
     steps.push('Switched to the Compact design to save space.');
   }
   steps.push(pages <= 1 ? 'It now fits on one page.' : `It is now ${pages} pages. To shorten it further, remove older roles, projects or sections in the Edit tab, or hide sections in Structure.`);
-  return { ...result, content, reply: steps.join(' '), pages };
+  return { ...result, content, analysis: withMatchScore(job, content, result.analysis), reply: steps.join(' '), pages };
 }
