@@ -26,4 +26,3 @@ export interface MatchResult {
   matched: KeywordGap[];
   missing: KeywordGap[];
 }
-

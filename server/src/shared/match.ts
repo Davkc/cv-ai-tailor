@@ -93,4 +93,3 @@ export function scoreMatch(job: Target, resume: Resume): MatchResult {
   const weightOf = (items: KeywordGap[]) => items.reduce((sum, item) => sum + item.weight, 0);
   return { score: wanted.length ? Math.round(100 * weightOf(matched) / weightOf(wanted)) : null, matched, missing };
 }
-
