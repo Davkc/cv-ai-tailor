@@ -2,6 +2,8 @@
 
 CV Tailor AI helps you tailor a master CV to a job advert. Paste the advert, generate a draft from your experience, and review the matched and missing keywords as you edit. You can save a version, track the application, and export the CV as PDF or Word.
 
+The [public GitHub Pages demo](https://davkc.github.io/cv-ai-tailor/) compares pasted CV and job text in the browser. Build the static demo with `npm run build:demo -w client`. Its files are in `client/demo-dist`.
+
 ## Run locally
 
 Use Node.js 24 LTS and npm. The temporary MongoDB used in local development and backend tests downloads a platform binary on first use.

@@ -24,3 +24,4 @@ tmp/
 uploads/
 *.pdf
 *.docx
+client/demo-dist/
