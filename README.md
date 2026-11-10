@@ -22,6 +22,12 @@ npm run dev:client
 
 Open [the local app](http://localhost:5173). Select owner sign-in and use `APP_PASSWORD` or the local default `dev-password`. Add your CV in **Master CV** by entering your experience or importing a PDF or DOCX. Then open **Tailor**, enter the job title and advert, and select **Tailor My CV**. Open **Match** to see keyword coverage.
 
+## Public signup
+
+Visitors choose **Create account**, enter an email address, and follow the emailed link to set their name and password. Each link can be used once and expires after 30 minutes. Existing accounts continue to sign in with their current credentials.
+
+To enable signup, configure a Resend sending key and a sender address on a verified domain. Set the three signup variables below on the server or in the Render service’s environment. Without them, signup is unavailable and existing users can still sign in.
+
 ## Environment variables
 
 Copy [.env.example](.env.example) for the full list and sample values. Keep keys and passwords on the server. The frontend uses the same-origin API by default.
@@ -34,6 +40,8 @@ Copy [.env.example](.env.example) for the full list and sample values. Keep keys
 | `AI_JSON_MODE`, `AI_TEMPERATURE` | JSON response mode and optional temperature override. |
 | `AI_TIMEOUT_MS`, `AI_TOTAL_TIMEOUT_MS` | Provider attempt and overall completion deadlines. Defaults are 30,000 and 90,000 ms. |
 | `AI_DAILY_LIMIT`, `AI_DAILY_LIMIT_OWNER` | Daily AI request allowances for members and the owner. Zero allows unlimited requests. |
+| `APP_PUBLIC_URL` | Public origin for verification links. Use HTTPS in production or `http://localhost:5173` for local Vite. |
+| `RESEND_API_KEY`, `SIGNUP_EMAIL_FROM` | Server-only sending key and verified sender address for signup emails. |
 | `MONGODB_URI` | Persistent MongoDB connection string. Required in production. |
 | `APP_PASSWORD`, `JWT_SECRET` | Owner password and signing secret. Production requires a password of at least 10 characters and a secret of at least 32. |
 | `NODE_ENV`, `PORT`, `MAX_UPLOAD_MB` | Runtime mode, server port and maximum upload size. |

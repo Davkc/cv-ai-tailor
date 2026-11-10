@@ -34,6 +34,7 @@ export interface Config {
   aiDailyLimit: number;
   /** AI requests per day for the owner; 0 means unlimited. */
   aiDailyLimitOwner: number;
+  signupMail?: { apiKey: string; from: string; origin: string };
   ai: {
     apiKey: string;
     baseUrl: string;
@@ -83,6 +84,18 @@ export function loadConfig(rawSource: NodeJS.ProcessEnv = process.env): Config {
     }
   }
 
+  const apiKey = source.RESEND_API_KEY?.trim();
+  const from = source.SIGNUP_EMAIL_FROM?.trim();
+  const publicUrl = source.APP_PUBLIC_URL?.trim();
+  let signupMail: Config['signupMail'];
+  if (apiKey && from && publicUrl) {
+    const url = new URL(publicUrl);
+    if (url.username || url.password || (url.protocol !== 'https:' && (isProduction || url.protocol !== 'http:'))) {
+      throw new Error('APP_PUBLIC_URL must be an HTTPS origin in production.');
+    }
+    signupMail = { apiKey, from, origin: url.origin };
+  }
+
   const temperature = source.AI_TEMPERATURE?.trim() ? Number(source.AI_TEMPERATURE) : undefined;
 
   return {
@@ -101,6 +114,7 @@ export function loadConfig(rawSource: NodeJS.ProcessEnv = process.env): Config {
     maxUploadBytes: num(source.MAX_UPLOAD_MB, 5) * 1024 * 1024,
     aiDailyLimit: source.AI_DAILY_LIMIT === '0' ? 0 : num(source.AI_DAILY_LIMIT, 40),
     aiDailyLimitOwner: num(source.AI_DAILY_LIMIT_OWNER, 0),
+    signupMail,
     ai: {
       apiKey: source.AI_API_KEY?.trim() ?? '',
       baseUrl: (source.AI_BASE_URL?.trim() || 'https://api.openai.com/v1').replace(/\/$/, ''),

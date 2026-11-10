@@ -5,7 +5,7 @@ export type Role = (typeof ROLES)[number];
 
 export interface UserDoc {
   _id: Types.ObjectId;
-  /** "owner" for the app owner (signs in with APP_PASSWORD); the email address for invited members. */
+  /** "owner" for the app owner (signs in with APP_PASSWORD); the email address for members. */
   username: string;
   name: string;
   role: Role;
@@ -17,7 +17,7 @@ export interface UserDoc {
   layout?: unknown;
   /** AI requests made today, for the per-person daily limit. */
   aiUsage?: { date: string; count: number };
-  invitedWith?: string;
+  emailVerifiedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,7 +35,7 @@ const userSchema = new Schema<UserDoc>(
       date: { type: String },
       count: { type: Number, default: 0 },
     },
-    invitedWith: { type: String, default: '' },
+    emailVerifiedAt: { type: Date },
   },
   { timestamps: true },
 );

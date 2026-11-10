@@ -66,7 +66,7 @@ export function requireAuth(config: Config) {
       try {
         const user = await User.findById(payload.sub).select('role disabled').lean();
         if (!user || user.disabled) {
-          return next(new HttpError(401, 'This account is not active. Please contact the person who invited you.', 'unauthorized'));
+          return next(new HttpError(401, 'This account is not active. Please contact the app owner.', 'unauthorized'));
         }
         req.role = user.role;
       } catch (err) {

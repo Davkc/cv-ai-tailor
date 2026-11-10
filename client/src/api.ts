@@ -5,7 +5,6 @@ import type {
   Application,
   Design,
   InterviewPrep,
-  Invite,
   LetterTone,
   LinkedinProfile,
   SharedCv,
@@ -108,14 +107,12 @@ async function download(path: string, body: unknown, fallbackName: string, metho
 
 export const api = {
   login: (email: string, password: string) => json<{ token: string }>('/auth/login', 'POST', { email, password }),
-  register: (body: { code: string; name: string; email: string; password: string }) => json<{ token: string }>('/auth/register', 'POST', body),
+  requestSignup: (email: string) => json<{ ok: true }>('/auth/register', 'POST', { email }),
+  verifySignup: (body: { token: string; name: string; password: string }) => json<{ token: string }>('/auth/verify-signup', 'POST', body),
   account: () => json<{ account: Account }>('/account'),
   changePassword: (currentPassword: string, newPassword: string) => json<{ ok: true }>('/account/password', 'POST', { currentPassword, newPassword }),
   deleteAccount: () => json<{ deletedVersions: number }>('/account', 'DELETE'),
 
-  invites: () => json<{ invites: Invite[] }>('/admin/invites'),
-  createInvite: (maxUses: number, note: string) => json<{ invite: Invite }>('/admin/invites', 'POST', { maxUses, note }),
-  revokeInvite: (id: string) => json<void>(`/admin/invites/${encodeURIComponent(id)}`, 'DELETE'),
   users: () => json<{ users: AdminUser[]; dailyLimit: number }>('/admin/users'),
   setUserDisabled: (id: string, disabled: boolean) => json<{ ok: true }>(`/admin/users/${encodeURIComponent(id)}`, 'PATCH', { disabled }),
   deleteUser: (id: string) => json<void>(`/admin/users/${encodeURIComponent(id)}`, 'DELETE'),

@@ -57,7 +57,7 @@ interface Session {
   status: Status | null;
   /** email is empty for the owner, who signs in with the owner password alone */
   signIn(email: string, password: string): Promise<void>;
-  join(details: { code: string; name: string; email: string; password: string }): Promise<void>;
+  verifySignup(details: { token: string; name: string; password: string }): Promise<void>;
   refreshStatus(): void;
   signOut(): void;
 }
@@ -146,8 +146,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
         setToken(token);
         setSignedIn(true);
       },
-      join: async (details) => {
-        const { token } = await api.register(details);
+      verifySignup: async (details) => {
+        const { token } = await api.verifySignup(details);
+        window.history.replaceState(null, '', '/');
         setToken(token);
         setSignedIn(true);
       },

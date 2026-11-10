@@ -304,21 +304,17 @@ export const loginSchema = z.object({
 const email = z.string().trim().toLowerCase().max(160).regex(/^[^@\s]+@[^@\s]+\.[^@\s]+$/, 'Enter a valid email address');
 const newPassword = z.string().min(8, 'Use at least 8 characters').max(200);
 
-export const registerSchema = z.object({
-  code: z.string().trim().toUpperCase().min(4, 'Enter your invite code').max(40),
+export const registerSchema = z.object({ email });
+
+export const verifySignupSchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid verification link'),
   name: z.string().trim().min(1, 'Enter your name').max(120),
-  email,
   password: newPassword,
 });
 
 export const passwordChangeSchema = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword,
-});
-
-export const inviteCreateSchema = z.object({
-  maxUses: z.coerce.number().int().min(1).max(50).default(1),
-  note: text(120),
 });
 
 export const userUpdateSchema = z.object({ disabled: z.boolean() });

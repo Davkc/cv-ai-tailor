@@ -65,7 +65,7 @@ export function apiRouter(config: Config): Router {
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skip: () => testing,
-    message: { error: { code: 'rate_limited', message: 'Too many sign-in attempts. Please wait 15 minutes and try again.' } },
+    message: { error: { code: 'rate_limited', message: 'Too many account requests. Please wait 15 minutes and try again.' } },
   });
   // AI calls cost money; keep a ceiling even for the authenticated owner.
   const aiLimiter = rateLimit({

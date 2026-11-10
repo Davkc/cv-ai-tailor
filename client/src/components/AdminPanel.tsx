@@ -1,64 +1,26 @@
 import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
 import { useToast } from '../state';
-import type { AdminUser, Invite } from '../types';
-import { CopyLink, copyText } from './CopyLink';
-import { Button, Card, ConfirmDialog, Icon, LoadingBlock, Notice, formatDate } from './ui';
+import type { AdminUser } from '../types';
+import { Button, Card, ConfirmDialog, LoadingBlock, Notice, formatDate } from './ui';
 
-const inviteLink = (code: string) => `${window.location.origin}/?invite=${encodeURIComponent(code)}`;
-
-const inviteMessage = (code: string) => `Join me on CV Tailor AI to tailor your CV to any job. Your invite code is ${code}.`;
-
-/** Owner tools: invite codes for friends, and the list of people using the app. */
 export function AdminPanel() {
   const toast = useToast();
-  const [invites, setInvites] = useState<Invite[] | null>(null);
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [dailyLimit, setDailyLimit] = useState(0);
   const [error, setError] = useState('');
-  const [uses, setUses] = useState(1);
-  const [note, setNote] = useState('');
-  const [creating, setCreating] = useState(false);
   const [toDelete, setToDelete] = useState<AdminUser | null>(null);
-  // The code just created, shown with its link ready to copy.
-  const [latest, setLatest] = useState<Invite | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const load = () => {
-    Promise.all([api.invites(), api.users()])
-      .then(([i, u]) => {
-        setInvites(i.invites);
-        setUsers(u.users);
-        setDailyLimit(u.dailyLimit);
-      })
-      .catch((err) => setError(errorMessage(err)));
-  };
-  useEffect(load, []);
-
-  async function create() {
-    setCreating(true);
-    try {
-      const { invite } = await api.createInvite(uses, note.trim());
-      setInvites((list) => [invite, ...(list ?? [])]);
-      setNote('');
-      setLatest(invite);
-      toast('success', `Invite ${invite.code} created. Copy the link and send it to your friend.`);
-    } catch (err) {
-      toast('error', errorMessage(err));
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function revoke(invite: Invite) {
-    try {
-      await api.revokeInvite(invite.id);
-      setInvites((list) => list?.map((i) => (i.id === invite.id ? { ...i, revoked: true } : i)) ?? null);
-      toast('success', `Code ${invite.code} switched off.`);
-    } catch (err) {
-      toast('error', errorMessage(err));
-    }
-  }
+  useEffect(() => {
+    let cancelled = false;
+    api.users().then((data) => {
+      if (cancelled) return;
+      setUsers(data.users);
+      setDailyLimit(data.dailyLimit);
+    }).catch((err) => { if (!cancelled) setError(errorMessage(err)); });
+    return () => { cancelled = true; };
+  }, []);
 
   async function toggle(user: AdminUser) {
     try {
@@ -86,81 +48,13 @@ export function AdminPanel() {
   }
 
   if (error) return <Notice kind="error">{error}</Notice>;
-  if (!invites || !users) return <LoadingBlock />;
-  const active = invites.filter((i) => !i.revoked && i.uses < i.maxUses);
+  if (!users) return <LoadingBlock />;
 
   return (
     <div className="space-y-4">
       <Card>
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-fuchsia-500 text-white">
-            <Icon name="plus" />
-          </span>
-          <h2 className="font-bold text-slate-900">Invite a friend</h2>
-        </div>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Each friend gets their own private account: their own master CV, CVs and history. Their AI use counts against your AI key, up to {dailyLimit || 'unlimited'} requests each per day.
-        </p>
-        <div className="mt-3 grid grid-cols-[auto_1fr] items-end gap-2">
-          <label className="text-xs font-medium text-slate-600">
-            Uses
-            <select value={uses} onChange={(e) => setUses(Number(e.target.value))} className="mt-1 block h-12 rounded-xl border border-slate-300 bg-white px-3 text-slate-900">
-              {[1, 2, 3, 5, 10].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-medium text-slate-600">
-            Who is it for? (optional)
-            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={120} placeholder="e.g. Brian" className="mt-1 block h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-slate-900" />
-          </label>
-        </div>
-        <Button variant="primary" icon="sparkles" className="mt-3 w-full" onClick={create} loading={creating}>
-          Create invite link
-        </Button>
-
-        {latest && !latest.revoked && (
-          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-3">
-            <p className="mb-2 text-sm font-semibold text-emerald-900">
-              Invite link for {latest.note || 'your friend'} <span className="font-mono">({latest.code})</span>
-            </p>
-            <CopyLink link={inviteLink(latest.code)} shareTitle="CV Tailor AI invite" shareText={inviteMessage(latest.code)} />
-            <p className="mt-2 text-xs text-emerald-900/80">Opening the link takes them to the join screen with the code filled in.</p>
-          </div>
-        )}
-
-        {invites.length > 0 && (
-          <ul className="mt-4 divide-y divide-slate-100">
-            {invites.slice(0, 12).map((invite) => {
-              const usable = !invite.revoked && invite.uses < invite.maxUses;
-              return (
-                <li key={invite.id} className="flex items-center gap-2 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <p className={`font-mono text-sm font-bold ${usable ? 'text-slate-900' : 'text-slate-400 line-through'}`}>{invite.code}</p>
-                    <p className="text-xs text-slate-500">
-                      {[invite.note, `${invite.uses}/${invite.maxUses} used`, invite.revoked ? 'switched off' : ''].filter(Boolean).join(' · ')}
-                    </p>
-                  </div>
-                  {usable && (
-                    <>
-                      <Button size="sm" icon="clip" onClick={() => copyText(inviteLink(invite.code)).then((done) => (done ? toast('success', 'Invite link copied.') : setLatest(invite)))}>
-                        Copy link
-                      </Button>
-                      <Button size="sm" variant="danger" aria-label={`Switch off ${invite.code}`} icon="trash" onClick={() => revoke(invite)} />
-                    </>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {active.length === 0 && invites.length > 0 && <p className="mt-2 text-xs text-slate-500">No unused codes left.</p>}
-      </Card>
-
-      <Card>
         <h2 className="font-bold text-slate-900">People using the app</h2>
+        <p className="mt-1 text-sm text-slate-600">Daily AI allowance per member: {dailyLimit || 'unlimited'}.</p>
         <ul className="mt-2 divide-y divide-slate-100">
           {users.map((user) => (
             <li key={user.id} className="py-3">

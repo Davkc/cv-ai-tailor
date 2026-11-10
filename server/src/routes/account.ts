@@ -1,26 +1,18 @@
-import { randomBytes } from 'node:crypto';
 import { Router, type RequestHandler } from 'express';
 import mongoose from 'mongoose';
 import type { Config } from '../config.js';
 import { HttpError, notFound } from '../errors.js';
 import { hashPassword, issueToken, ownerIdOf, passwordMatches, requireAdmin, verifyPassword } from '../middleware/auth.js';
 import { requireDb } from '../middleware/error.js';
-import { InviteCode } from '../models/InviteCode.js';
 import { MasterProfile } from '../models/Profile.js';
 import { TailoredCv } from '../models/TailoredCv.js';
 import { User } from '../models/User.js';
-import { inviteCreateSchema, loginSchema, passwordChangeSchema, registerSchema, userUpdateSchema } from '../schemas.js';
+import { loginSchema, passwordChangeSchema, registerSchema, userUpdateSchema, verifySignupSchema } from '../schemas.js';
+
+import { completeSignup, requestSignup } from '../services/signup.js';
 
 export const OWNER_USERNAME = 'owner';
 const BAD_LOGIN = 'Incorrect email or password.';
-
-/** Codes like "CVT-7KQ2-M9PX": no 0/O/1/I, easy to read out or type on a phone. */
-function newInviteCode(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = randomBytes(8);
-  const chars = [...bytes].map((b) => alphabet[b % alphabet.length]);
-  return `CVT-${chars.slice(0, 4).join('')}-${chars.slice(4).join('')}`;
-}
 
 function idParam(id: unknown): string {
   const value = String(id ?? '');
@@ -38,7 +30,7 @@ export async function deleteUserData(userId: string, deleteAccount: boolean) {
   return versions.deletedCount;
 }
 
-/** Routes that need no session: signing in and joining with an invite code. */
+/** Routes that need no session: signing in and verifying a new account. */
 export function publicAccountRouter(config: Config, limiter: RequestHandler): Router {
   const router = Router();
 
@@ -67,26 +59,15 @@ export function publicAccountRouter(config: Config, limiter: RequestHandler): Ro
   });
 
   router.post('/auth/register', limiter, requireDb, async (req, res) => {
-    const { code, name, email, password } = registerSchema.parse(req.body);
-    if (email === OWNER_USERNAME) throw new HttpError(400, 'Choose a different email address.', 'bad_request');
-    if (await User.exists({ username: email })) {
-      throw new HttpError(409, 'An account with this email already exists. Sign in instead.', 'email_taken');
-    }
-    // Claim one use of the code atomically, so a single-use code cannot be used twice at once.
-    const invite = await InviteCode.findOneAndUpdate(
-      { code, revoked: false, $expr: { $lt: ['$uses', '$maxUses'] } },
-      { $inc: { uses: 1 } },
-      { returnDocument: 'after' },
-    );
-    if (!invite) throw new HttpError(400, 'That invite code is not valid, or it has already been used.', 'invalid_invite');
-    try {
-      const user = await User.create({ username: email, name, role: 'member', passwordHash: await hashPassword(password), invitedWith: code, lastLoginAt: new Date() });
-      res.status(201).json({ token: issueToken(config, String(user._id), 'member') });
-    } catch (err) {
-      await InviteCode.updateOne({ _id: invite._id }, { $inc: { uses: -1 } });
-      if ((err as { code?: number }).code === 11000) throw new HttpError(409, 'An account with this email already exists. Sign in instead.', 'email_taken');
-      throw err;
-    }
+    const { email } = registerSchema.parse(req.body);
+    await requestSignup(config, email);
+    res.status(202).json({ ok: true });
+  });
+
+  router.post('/auth/verify-signup', limiter, requireDb, async (req, res) => {
+    const { token, name, password } = verifySignupSchema.parse(req.body);
+    const user = await completeSignup(token, name, password);
+    res.status(201).json({ token: issueToken(config, String(user._id), 'member') });
   });
 
   return router;
@@ -120,30 +101,6 @@ export function accountRouter(config: Config): Router {
   });
 
   // ---------- owner only ----------
-
-  router.get('/admin/invites', requireAdmin, async (_req, res) => {
-    const invites = await InviteCode.find().sort({ createdAt: -1 }).limit(100).lean();
-    res.json({ invites: invites.map((i) => ({ id: String(i._id), code: i.code, note: i.note, maxUses: i.maxUses, uses: i.uses, revoked: i.revoked, createdAt: i.createdAt })) });
-  });
-
-  router.post('/admin/invites', requireAdmin, async (req, res) => {
-    const { maxUses, note } = inviteCreateSchema.parse(req.body);
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        const invite = await InviteCode.create({ code: newInviteCode(), createdBy: ownerIdOf(req), maxUses, note });
-        return res.status(201).json({ invite: { id: String(invite._id), code: invite.code, note: invite.note, maxUses: invite.maxUses, uses: 0, revoked: false, createdAt: invite.createdAt } });
-      } catch (err) {
-        if ((err as { code?: number }).code !== 11000) throw err;
-      }
-    }
-    throw new HttpError(500, 'Could not create a unique code. Please try again.');
-  });
-
-  router.delete('/admin/invites/:id', requireAdmin, async (req, res) => {
-    const result = await InviteCode.updateOne({ _id: idParam(req.params.id) }, { $set: { revoked: true } });
-    if (result.matchedCount === 0) throw notFound('That invite code was not found.');
-    res.status(204).end();
-  });
 
   router.get('/admin/users', requireAdmin, async (_req, res) => {
     const users = await User.find().sort({ createdAt: 1 }).select('username name role disabled lastLoginAt createdAt aiUsage').lean();

@@ -359,16 +359,6 @@ export interface Account {
   createdAt: string;
 }
 
-export interface Invite {
-  id: string;
-  code: string;
-  note: string;
-  maxUses: number;
-  uses: number;
-  revoked: boolean;
-  createdAt: string;
-}
-
 export interface AdminUser {
   id: string;
   name: string;
