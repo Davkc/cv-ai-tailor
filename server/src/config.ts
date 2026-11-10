@@ -86,7 +86,7 @@ export function loadConfig(rawSource: NodeJS.ProcessEnv = process.env): Config {
 
   const apiKey = source.RESEND_API_KEY?.trim();
   const from = source.SIGNUP_EMAIL_FROM?.trim();
-  const publicUrl = source.APP_PUBLIC_URL?.trim();
+  const publicUrl = source.APP_PUBLIC_URL?.trim() || source.RENDER_EXTERNAL_URL?.trim();
   let signupMail: Config['signupMail'];
   if (apiKey && from && publicUrl) {
     const url = new URL(publicUrl);

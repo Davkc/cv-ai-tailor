@@ -3,7 +3,7 @@
 # and they are never stored in this repository.
 services:
   - type: web
-    name: cv-tailor-ai
+    name: cv-tailor-public
     runtime: node
     plan: free
     buildCommand: npm ci --include=dev && npm run build
@@ -13,19 +13,14 @@ services:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
-        value: "22"
+        value: "24"
       - key: MONGODB_URI
         sync: false
       - key: APP_PASSWORD
         sync: false
       - key: JWT_SECRET
         generateValue: true
-      - key: AI_API_KEY
+      - key: RESEND_API_KEY
         sync: false
-      # Google Gemini through its OpenAI-compatible endpoint. Change these three to use another provider.
-      - key: AI_BASE_URL
-        value: https://generativelanguage.googleapis.com/v1beta/openai
-      - key: AI_MODEL
-        value: gemini-3.6-flash
-      - key: AI_FALLBACK_MODELS
-        value: gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite
+      - key: SIGNUP_EMAIL_FROM
+        sync: false
