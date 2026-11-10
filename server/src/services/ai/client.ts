@@ -1,4 +1,5 @@
-import type { z } from 'zod';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { z } from 'zod';
 import { aiConfigured, type Config } from '../../config.js';
 import { HttpError } from '../../errors.js';
 import { log } from '../../logger.js';
@@ -28,63 +29,68 @@ function providerError(status: number): AiError {
   if (status === 429) {
     return new AiError(503, 'The AI provider is rate-limiting requests or the account is out of quota. Please try again in a minute.', 'ai_rate_limited');
   }
+  if (status < 500 && status !== 408) {
+    return new AiError(502, 'The AI provider rejected the request. Check the server model configuration.', 'ai_request_rejected');
+  }
   return new AiError(502, 'The AI provider returned an error. Please try again.', 'ai_provider_error');
 }
 
-async function callProvider(config: Config, model: string, messages: Message[], jsonMode: boolean): Promise<string> {
+async function callProvider(config: Config, model: string, messages: Message[], jsonMode: boolean, deadline: AbortSignal): Promise<string> {
   const body: Record<string, unknown> = { model, messages };
   if (jsonMode) body.response_format = { type: 'json_object' };
   if (config.ai.temperature !== undefined) body.temperature = config.ai.temperature;
 
-  let response: Response;
+  const signal = AbortSignal.any([deadline, AbortSignal.timeout(config.ai.timeoutMs)]);
   try {
-    response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
+    const response = await fetch(new URL(config.ai.baseUrl + '/chat/completions'), {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.ai.apiKey}` },
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + config.ai.apiKey },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(config.ai.timeoutMs),
+      signal,
     });
-  } catch (err) {
-    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-      throw new AiError(504, 'The AI provider took too long to respond. Please try again.', 'ai_timeout');
+
+    if (!response.ok) {
+      // Some compatible providers reject response_format. The prompt still requests JSON.
+      if (jsonMode && response.status === 400 && /response_format|json_object|json mode/i.test(await response.text())) {
+        return callProvider(config, model, messages, false, deadline);
+      }
+      if (!response.bodyUsed) await response.body?.cancel();
+      log.warn('AI provider responded with HTTP ' + response.status);
+      throw providerError(response.status);
     }
+
+    const payload: unknown = await response.json().catch((err: unknown) => {
+      if (signal.aborted) throw err;
+      return undefined;
+    });
+    const parsed = completionSchema.safeParse(payload);
+    const content = parsed.success ? parsed.data.choices[0]?.message.content.trim() : undefined;
+    if (!content) throw new AiError(502, 'The AI provider returned an invalid or empty response. Please try again.', 'ai_invalid_response');
+    return content;
+  } catch (err) {
+    if (err instanceof AiError) throw err;
+    if (signal.aborted) throw timeoutError();
     throw new AiError(502, 'Could not reach the AI provider. Check AI_BASE_URL and your network.', 'ai_unreachable');
   }
-
-  if (!response.ok) {
-    // Some OpenAI-compatible providers do not support response_format; retry once without it.
-    if (jsonMode && response.status === 400) {
-      const detail = await response.text().catch(() => '');
-      if (/response_format|json_object|json mode/i.test(detail)) {
-        return callProvider(config, model, messages, false);
-      }
-    }
-    log.warn(`AI provider responded with HTTP ${response.status}`);
-    throw providerError(response.status);
-  }
-
-  const payload = (await response.json().catch(() => null)) as
-    | { choices?: { message?: { content?: unknown } }[] }
-    | null;
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || !content.trim()) {
-    throw new AiError(502, 'The AI provider returned an empty response. Please try again.', 'ai_invalid_response');
-  }
-  return content;
 }
 
-const BUSY_CODES = new Set(['ai_rate_limited', 'ai_provider_error', 'ai_timeout']);
+const timeoutError = () => new AiError(504, 'The AI provider took too long to respond. Please try again.', 'ai_timeout');
+const RETRYABLE = new Set(['ai_rate_limited', 'ai_provider_error', 'ai_timeout', 'ai_unreachable']);
+const MAX_RETRIES = 2;
+const completionSchema = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string() }) })) });
 
 /** Pull a JSON object out of a model reply, tolerating code fences and surrounding prose. */
 export function parseJsonReply(reply: string): unknown {
   const unfenced = reply.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
   try {
-    return JSON.parse(unfenced);
+    const parsed: unknown = JSON.parse(unfenced);
+    return parsed;
   } catch {
     const start = unfenced.indexOf('{');
     const end = unfenced.lastIndexOf('}');
     if (start === -1 || end <= start) throw new Error('no JSON object found');
-    return JSON.parse(unfenced.slice(start, end + 1));
+    const parsed: unknown = JSON.parse(unfenced.slice(start, end + 1));
+    return parsed;
   }
 }
 
@@ -105,26 +111,22 @@ export async function chatJson<S extends z.ZodType>(
     { role: 'user', content: options.user },
   ];
 
-  // An overloaded, rate-limited or stalled model should not stop the user: move on to the
-  // next model in the list, and when the list runs out, pause briefly and try once more.
-  const models = [config.ai.model, ...config.ai.fallbackModels.filter((m) => m !== config.ai.model)];
-  let current = 0;
-  let waited = false;
+  const models = [...new Set([config.ai.model, ...config.ai.fallbackModels])];
+  const deadline = AbortSignal.timeout(config.ai.totalTimeoutMs);
+  let retries = 0;
+  let model = config.ai.model;
   const ask = async (): Promise<string> => {
     for (;;) {
       try {
-        return await callProvider(config, models[current] ?? config.ai.model, messages, config.ai.jsonMode);
+        return await callProvider(config, model, messages, config.ai.jsonMode, deadline);
       } catch (err) {
-        if (!(err instanceof AiError) || !BUSY_CODES.has(err.code)) throw err;
-        if (current < models.length - 1) {
-          current++;
-          log.warn('AI model unavailable; trying the next configured model');
-        } else if (!waited && err.code !== 'ai_timeout') {
-          waited = true;
-          await new Promise((resolve) => setTimeout(resolve, config.ai.retryDelayMs));
-        } else {
-          throw err;
-        }
+        if (deadline.aborted) throw timeoutError();
+        if (!(err instanceof AiError) || !RETRYABLE.has(err.code) || retries >= MAX_RETRIES) throw err;
+        const delay = config.ai.retryDelayMs * 2 ** retries;
+        retries++;
+        model = models[retries] ?? model;
+        log.warn('Retrying a transient AI provider failure');
+        await sleep(delay, undefined, { signal: deadline }).catch(() => { throw timeoutError(); });
       }
     }
   };
@@ -134,7 +136,7 @@ export async function chatJson<S extends z.ZodType>(
     let problem: string;
     try {
       const result = options.schema.safeParse(parseJsonReply(reply));
-      if (result.success) return { data: result.data, model: models[current] ?? config.ai.model };
+      if (result.success) return { data: result.data, model };
       problem = describeIssues(result.error).join('; ');
     } catch {
       problem = 'the reply was not a single valid JSON object';

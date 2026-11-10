@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { extractText as readPdf, getDocumentProxy } from 'unpdf';
 import { HttpError } from '../src/errors.js';
-import { parseLayout, type AiRefineOutput } from '../src/schemas.js';
+import { analysisSchema, parseLayout, type AiRefineOutput } from '../src/schemas.js';
 import { detectLayout } from '../src/services/heuristicParser.js';
 import { renderCvPdf } from '../src/services/pdf.js';
-import { applyRefinement, applySafeguards, scoreFromRequirements } from '../src/services/safeguards.js';
+import { applyRefinement, applySafeguards } from '../src/services/safeguards.js';
 import { extractLayout, looksLikeJobAdvert, refineCv, restyleCv, tailorCv } from '../src/services/tailor.js';
 import { job, mockAi, profile, sampleContent, testConfig, type MockAi } from './helpers.js';
 
@@ -44,7 +44,7 @@ describe('CV structure', () => {
     const result = await extractLayout(configFor(ai), TEMPLATE);
     expect(result.method).toBe('ai');
     expect(result.layout.sections[0]).toMatchObject({ key: 'experience', title: 'Where I Have Worked' });
-    expect(ai.requests[0]!.body.messages[1].content).toContain('<cv_text>');
+    expect(ai.requests[0]!.body.messages[1]!.content).toContain('<cv_text>');
   });
 
   it('falls back to the rule-based reading when the AI fails', async () => {
@@ -94,7 +94,7 @@ function revision(overrides: Partial<AiRefineOutput> = {}): AiRefineOutput {
       { sourceId: exp.id, bullets: ['Built event streaming with Kafka for loan notifications.', 'Ran workloads on Kubernetes clusters.', 'Design MongoDB schemas and optimise slow queries.'] },
     ],
     projects: [],
-    analysis: { score: 78, requirements: [], matchedSkills: ['Node.js', 'Kafka'], missingSkills: ['Kubernetes'], relevantExperience: [], keywordsIncluded: ['Kafka'], suggestions: [], missingInformation: [] },
+    analysis: { requirements: [], matchedSkills: ['Node.js', 'Kafka'], missingSkills: ['Kubernetes'], relevantExperience: [], keywordsIncluded: ['Kafka'], suggestions: [], missingInformation: [] },
     ...overrides,
   };
 }
@@ -102,13 +102,18 @@ function revision(overrides: Partial<AiRefineOutput> = {}): AiRefineOutput {
 const INSTRUCTION = 'I used Kafka at Example Fintech Ltd for event streaming of loan notifications. Please add it.';
 
 describe('refining a CV with an instruction', () => {
+  it('does not treat a request to add a skill as evidence the candidate used it', () => {
+    const { content, newSkills } = applyRefinement(profile, sampleContent(), 'Please add Kafka.', revision());
+    expect(content.skills.technical).not.toContain('Kafka');
+    expect(newSkills).not.toContain('Kafka');
+  });
+
   it('accepts facts the user states and still rejects what nobody stated', () => {
     const { content, analysis, newSkills } = applyRefinement(profile, sampleContent(), INSTRUCTION, revision());
     expect(content.skills.technical).toContain('Kafka');
     expect(content.skills.technical).not.toContain('Kubernetes');
     expect(content.experience[0]!.bullets).toEqual(['Built event streaming with Kafka for loan notifications.', 'Design MongoDB schemas and optimise slow queries.']);
     expect(newSkills).toEqual(['Kafka']);
-    expect(analysis.score).toBe(78);
     expect(analysis.missingSkills).toContain('Kubernetes');
     expect(analysis.flags.join(' ')).toContain('Kubernetes');
   });
@@ -145,10 +150,10 @@ describe('refining a CV with an instruction', () => {
     const result = await refineCv(configFor(ai), profile, job, sampleContent(), INSTRUCTION);
     expect(result.reply).toBe('Added your Kafka experience.');
     expect(result.newSkills).toEqual(['Kafka']);
-    const user = ai.requests[0]!.body.messages[1].content as string;
+    const user = ai.requests[0]!.body.messages[1]!.content;
     expect(user).toContain('<instruction>');
     expect(user).toContain('<current_cv>');
-    expect(ai.requests[0]!.body.messages[0].content).not.toContain('loan notifications');
+    expect(ai.requests[0]!.body.messages[0]!.content).not.toContain('loan notifications');
   });
 
   it('is unavailable without an AI key, and says so', async () => {
@@ -164,7 +169,7 @@ describe('instructions given before tailoring', () => {
     skills: { technical: ['Node.js', 'Kafka', 'Kubernetes'], soft: [] },
     experience: [{ sourceId: exp.id, bullets: ['Built REST APIs in Node.js.'] }],
     projects: [],
-    analysis: { score: 70, requirements: [], matchedSkills: [], missingSkills: [], relevantExperience: [], keywordsIncluded: [], suggestions: [], missingInformation: [] },
+    analysis: { requirements: [], matchedSkills: [], missingSkills: [], relevantExperience: [], keywordsIncluded: [], suggestions: [], missingInformation: [] },
   };
 
   it('counts what the user states there, and nothing more', () => {
@@ -175,7 +180,7 @@ describe('instructions given before tailoring', () => {
   it('are sent to the model as the candidate block', async () => {
     ai = await mockAi([{ content: JSON.stringify(proposal) }]);
     await tailorCv(configFor(ai), profile, { ...job, instructions: 'Keep it to one page.' });
-    expect(ai.requests[0]!.body.messages[1].content).toContain('<candidate_instructions>\nKeep it to one page.');
+    expect(ai.requests[0]!.body.messages[1]!.content).toContain('<candidate_instructions>\nKeep it to one page.');
   });
 });
 
@@ -185,7 +190,7 @@ describe('fallback model', () => {
     skills: { technical: ['Node.js'], soft: [] },
     experience: [],
     projects: [],
-    analysis: { score: 50, requirements: [], matchedSkills: [], missingSkills: [], relevantExperience: [], keywordsIncluded: [], suggestions: [], missingInformation: [] },
+    analysis: { requirements: [], matchedSkills: [], missingSkills: [], relevantExperience: [], keywordsIncluded: [], suggestions: [], missingInformation: [] },
   });
 
   it('is used when the main model is overloaded', async () => {
@@ -220,7 +225,7 @@ describe('robustness of real model output', () => {
       skills: { technical: ['Node.js'], soft: [] },
       experience: [{ sourceId: exp.id, bullets: ['Built REST APIs in Node.js. ' + 'More detail. '.repeat(60)] }],
       projects: [],
-      analysis: { score: 60, requirements: [], matchedSkills: [long], missingSkills: [long], relevantExperience: [long.repeat(5)], keywordsIncluded: [], suggestions: [long.repeat(6)], missingInformation: [long.repeat(6)] },
+      analysis: { requirements: [], matchedSkills: [long], missingSkills: [long], relevantExperience: [long.repeat(5)], keywordsIncluded: [], suggestions: [long.repeat(6)], missingInformation: [long.repeat(6)] },
     });
     expect(analysis.missingSkills[0]!.length).toBeLessThanOrEqual(120);
     expect(analysis.missingSkills[0]!.endsWith('…')).toBe(true);
@@ -251,27 +256,14 @@ describe('a job advert pasted into the chat box', () => {
   });
 });
 
-describe('requirement-based match score', () => {
-  it('weights essentials over desirables and gives half credit for related experience', () => {
-    expect(scoreFromRequirements([])).toBeUndefined();
-    expect(scoreFromRequirements([{ importance: 'essential', status: 'met' }])).toBe(100);
-    expect(scoreFromRequirements([{ importance: 'essential', status: 'partial' }])).toBe(50);
-    // 3 (met) + 1.5 (partial) + 0 (desirable missing) out of 3 + 3 + 1
-    expect(scoreFromRequirements([
-      { importance: 'essential', status: 'met' },
-      { importance: 'essential', status: 'partial' },
-      { importance: 'desirable', status: 'missing' },
-    ])).toBe(64);
-  });
-
-  it('computes the score from the checklist and never credits what the candidate lacks', () => {
+describe('advisory requirement checklist', () => {
+  it('marks unsupported requirements missing', () => {
     const { analysis } = applySafeguards(profile, {
       summary: 'Developer.',
       skills: { technical: ['Node.js'], soft: [] },
       experience: [],
       projects: [],
       analysis: {
-        score: 10,
         requirements: [
           { requirement: 'Node.js APIs', importance: 'essential', status: 'met', evidence: 'REST APIs at Example Fintech' },
           { requirement: 'Kubernetes experience', importance: 'essential', status: 'met', evidence: 'deployed services' },
@@ -286,8 +278,6 @@ describe('requirement-based match score', () => {
       },
     });
     expect(analysis.requirements.map((r) => r.status)).toEqual(['met', 'missing', 'partial']);
-    // 3 + 0 + 0.5 out of 7
-    expect(analysis.score).toBe(50);
   });
 });
 
@@ -295,7 +285,7 @@ describe('putting a CV in the manner of a sample CV', () => {
   const SAMPLE = ['Someone Else', 'someone@example.com', 'EDUCATION', 'MSc Physics, Other University', 'CORE COMPETENCIES', 'Kubernetes, Rust', 'CAREER HISTORY', 'Chief Scientist at Secret Labs', '- Led a team of 40 researchers'].join('\n');
 
   it('without an AI key, applies the sample structure only and says so', async () => {
-    const result = await restyleCv(testConfig(), profile, job, sampleContent(), sampleContent() as never, SAMPLE);
+    const result = await restyleCv(testConfig(), profile, job, sampleContent(), analysisSchema.parse({}), SAMPLE);
     expect(result.sectionsFound).toBe(3);
     expect(result.content.layout.sections.slice(0, 3).map((s) => s.title)).toEqual(['EDUCATION', 'CORE COMPETENCIES', 'CAREER HISTORY']);
     expect(result.reply).toMatch(/needs an AI provider/);
@@ -313,9 +303,9 @@ describe('putting a CV in the manner of a sample CV', () => {
     ai = await mockAi([{ content: JSON.stringify({ sections: [{ key: 'education', title: 'EDUCATION' }, { key: 'skills', title: 'CORE COMPETENCIES' }, { key: 'experience', title: 'CAREER HISTORY' }] }) }, { content: JSON.stringify(copied) }]);
     const result = await restyleCv(configFor(ai), profile, job, sampleContent(), sampleContent() as never, SAMPLE);
 
-    const user = ai.requests[1]!.body.messages[1].content as string;
+    const user = ai.requests[1]!.body.messages[1]!.content;
     expect(user).toContain('<style_sample>');
-    expect(ai.requests[1]!.body.messages[0].content).toContain('NEVER copy any fact');
+    expect(ai.requests[1]!.body.messages[0]!.content).toContain('NEVER copy any fact');
     const cv = JSON.stringify(result.content);
     expect(cv).not.toMatch(/Kubernetes|Rust|40 researchers|Secret Labs/);
     expect(result.content.experience[0]!.bullets).toEqual(['Built Node.js REST APIs for a savings platform.']);

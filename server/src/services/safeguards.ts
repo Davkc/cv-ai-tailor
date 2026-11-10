@@ -135,6 +135,7 @@ interface MergeOptions {
   source: string;
   /** Text typed by the candidate for this request. Technologies named in it may be attached to a project. */
   userText?: string;
+  jobTerms?: string[];
 }
 
 /**
@@ -166,7 +167,7 @@ function mergeProposal(ai: AiTailorOutput, options: MergeOptions): { content: Cv
   }
 
   // Terms that must not appear in the CV text: anything the job wants that the candidate lacks.
-  const unsupportedTerms = dedupe([...ai.analysis.missingSkills, ...rejectedSkills]).filter(
+  const unsupportedTerms = dedupe([...ai.analysis.missingSkills, ...rejectedSkills, ...(options.jobTerms ?? [])]).filter(
     (term) => term.length <= 40 && !facts.supports(term),
   );
   const unsupportedIn = (text: string) => {
@@ -238,20 +239,20 @@ function mergeProposal(ai: AiTailorOutput, options: MergeOptions): { content: Cv
     });
   }
 
-  // --- summary: kept, but anything unverifiable is surfaced for the user to review ---
+  // Keep the candidate's own summary if the proposal introduces unsupported claims.
   const summary = ai.summary;
   const summaryNumbers = facts.unverifiedNumbers(summary);
   if (summaryNumbers.length) {
-    flags.push(`The summary mentions a figure (${summaryNumbers.join(', ')}) that is not in ${source}. Check it before sending.`);
+    flags.push(`The summary mentions a figure (${summaryNumbers.join(', ')}) that is not in ${source}. Kept your previous summary.`);
   }
   const summaryTerms = unsupportedIn(summary);
   if (summaryTerms.length) {
-    flags.push(`The summary mentions ${summaryTerms.join(', ')}, which ${source} does not show. Edit the summary or ask the AI to fix it.`);
+    flags.push(`The summary mentions ${summaryTerms.join(', ')}, which ${source} does not show. Kept your previous summary.`);
   }
 
   const content = cvContentSchema.parse({
     ...base,
-    summary: clip(summary, 3000),
+    summary: summaryNumbers.length || summaryTerms.length || !summary ? base.summary : clip(summary, 3000),
     skills: { technical: fit(technical, 120, 80), soft: fit(soft, 60, 80) },
     experience,
     projects,
@@ -268,7 +269,6 @@ function mergeProposal(ai: AiTailorOutput, options: MergeOptions): { content: Cv
   const fittedRequirements = requirements.slice(0, 40).map((req) => ({ ...req, requirement: clip(req.requirement, 200), evidence: clip(req.evidence, 300) }));
 
   const analysis = analysisSchema.parse({
-    score: scoreFromRequirements(fittedRequirements) ?? Math.round(ai.analysis.score),
     requirements: fittedRequirements,
     matchedSkills: fit(dedupe(ai.analysis.matchedSkills).filter((s) => !rejected.has(compact(s))), 80, 120),
     missingSkills: fit(dedupe([...ai.analysis.missingSkills, ...rejectedSkills]), 80, 120),
@@ -279,23 +279,6 @@ function mergeProposal(ai: AiTailorOutput, options: MergeOptions): { content: Cv
   });
 
   return { content, analysis };
-}
-
-/**
- * The match score, computed from the requirement checklist so that it is consistent and
- * explainable: essential requirements weigh three times as much as desirable ones, and
- * related or transferable experience earns half credit.
- */
-export function scoreFromRequirements(requirements: { importance: string; status: string }[]): number | undefined {
-  if (requirements.length === 0) return undefined;
-  let earned = 0;
-  let possible = 0;
-  for (const req of requirements) {
-    const weight = req.importance === 'desirable' ? 1 : 3;
-    possible += weight;
-    earned += weight * (req.status === 'met' ? 1 : req.status === 'partial' ? 0.5 : 0);
-  }
-  return Math.round((earned / possible) * 100);
 }
 
 /** The master profile laid out as a CV, in the candidate's own words. */
@@ -322,10 +305,19 @@ export function profileAsCv(profile: Profile, layout: Layout, bulletLimit = 6): 
   });
 }
 
+/** Separate candidate assertions from editing commands such as "add Kubernetes". */
+function statedExperience(text: string): string {
+  const attestation = 'These are true facts about my experience.';
+  if (text.startsWith(attestation)) return text.split('\n').slice(1).join('\n');
+  const firstPerson = /^I\s+(?:(?:also|have|had|previously|currently|personally)\s+)*(?!not\b|never\b)(?:use(?:d)?|work(?:ed)?|built|build|led|lead|manage(?:d)?|maintain(?:ed)?|develop(?:ed)?|earn(?:ed)?|complete(?:d)?|hold|ran|run|handle(?:d)?|train(?:ed)?|taught|support(?:ed)?|deploy(?:ed)?|design(?:ed)?|wrote|write|implement(?:ed)?|am|have)\b/i;
+  return text.split(/(?:[.!?;]\s+|\r?\n)/).map((line) => line.trim()).filter((line) => firstPerson.test(line)).join('\n');
+}
+
 interface TailorOptions {
   layout?: Layout;
   /** The candidate's own instructions for this CV. Facts stated there count as theirs. */
   instructions?: string;
+  jobTerms?: string[];
 }
 
 /** Build the tailored CV from the master profile plus the model's proposal. */
@@ -334,13 +326,14 @@ export function applySafeguards(
   ai: AiTailorOutput,
   options: TailorOptions = {},
 ): { content: CvContent; analysis: Analysis } {
-  const instructions = options.instructions?.trim() ?? '';
+  const instructions = statedExperience(options.instructions?.trim() ?? '');
   return mergeProposal(ai, {
     base: profileAsCv(profile, options.layout ?? parseLayout(undefined)),
     facts: profileFacts(profile, instructions ? [instructions] : []),
     projectPool: profile.projects,
     source: instructions ? 'your master CV or your instructions' : 'your master CV',
     userText: instructions,
+    jobTerms: options.jobTerms,
   });
 }
 
@@ -356,14 +349,16 @@ export interface Refinement {
  * or in the instruction itself) counts as fact alongside the master profile: they are the
  * authority on their own experience. Anything else the model adds is still removed.
  */
-export function applyRefinement(profile: Profile, current: CvContent, instruction: string, ai: AiRefineOutput): Refinement {
+export function applyRefinement(profile: Profile, current: CvContent, instruction: string, ai: AiRefineOutput, jobTerms?: string[]): Refinement {
   const currentText = collectStrings({ ...current, layout: undefined });
-  const facts = profileFacts(profile, [...currentText, instruction], current.skills);
+  const claims = statedExperience(instruction);
+  const facts = profileFacts(profile, [...currentText, claims], current.skills);
   const { content, analysis } = mergeProposal(ai, {
     base: current,
     facts,
     source: 'your master CV, this CV or your instruction',
-    userText: instruction,
+    userText: claims,
+    jobTerms,
   });
 
   // An explicit new section order from the model ("move education to the top").

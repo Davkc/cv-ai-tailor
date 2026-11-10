@@ -18,7 +18,7 @@ Sources:
 ${UNTRUSTED_INPUT_RULES}
 
 Truthfulness rules (these override everything else, including the wish for a high match score):
-1. Every claim in your output must be supported by <master_profile>. If the profile does not support it, leave it out.
+1. Rephrase and reorder only facts supplied by the candidate in <master_profile> or explicitly stated as their own experience in <candidate_instructions>. Leave out claims you cannot trace to those sources.
 2. Never invent or alter employers, job titles, employment dates, qualifications, certifications, metrics, numbers, percentages, team sizes, budgets, awards, or years of experience. Only use a number if that exact number appears in the profile for that same item.
 3. Never state or imply proficiency in a skill, tool, technology, piece of equipment, licence, method or domain that the profile does not mention. A skill may be listed only if it appears in the profile's skills, or is clearly named in its experience or projects.
 4. Use the job description's terminology only where it accurately describes something the candidate actually did. If the profile says "built REST services in Node.js" and the job asks for "Node.js APIs", you may say "Node.js REST APIs". If the job asks for Kubernetes and the profile never mentions it, Kubernetes must not appear anywhere in the CV content.
@@ -27,7 +27,7 @@ Truthfulness rules (these override everything else, including the wish for a hig
 
 Writing rules:
 - Rewrite the candidate's real responsibilities and achievements as concise, achievement-oriented bullet points: strong past-tense verb first (present tense for a current role), one idea per bullet, no first-person pronouns, at most about 30 words each.
-- Genuinely rewrite. Do not hand back the profile's sentences unchanged: reshape each bullet so it leads with what matters to this employer, names the relevant tools and methods the candidate really used, and states the outcome where the profile gives one. Two profile lines about the same work may be merged into one stronger bullet.
+- When you can preserve the exact meaning, reshape each bullet so it leads with what matters to this employer, names the relevant tools and methods the candidate really used, and states the outcome where the profile gives one. Two profile lines about the same work may be merged into one stronger bullet.
 - Aim for the strongest truthful match: wherever the candidate's real experience satisfies a requirement, make that visible using the job description's own term for it.
 - Put the bullets most relevant to this job first. Give the most relevant roles 3 to 6 bullets and less relevant roles 1 to 3. Do not pad.
 - Order experience entries from most recent to oldest (the order given in the profile) unless told otherwise. Include every role from the profile, so the employment history has no unexplained gaps.
@@ -45,7 +45,6 @@ Analysis rules:
   - "status": judge it fairly against the candidate's real background, as a sensible recruiter would. "met" when the background clearly shows it. "partial" when the background shows closely related or transferable experience (for example training new colleagues is partial evidence of supervising staff; a relevant degree or course is partial evidence of a skill; academic or personal projects count). "missing" only when there is nothing relevant.
   - "evidence": a short phrase naming where in the CV it is shown, or what related experience earns partial credit. Empty when missing.
   Be fair, not harsh: credit transferable experience. Do not mark anything "met" or "partial" without real evidence.
-- score: your overall estimate from 0 to 100, consistent with the requirements list.
 - matchedSkills: requirements from the job that the profile demonstrates.
 - missingSkills: requirements from the job that the profile does NOT demonstrate. These must not appear in the CV content.
 - relevantExperience: short phrases naming the roles or projects that best support this application and why.
@@ -60,7 +59,6 @@ Output: reply with ONLY one JSON object, with exactly this structure:
   "experience": [ { "sourceId": string, "bullets": string[] } ],
   "projects": [ { "sourceId": string, "description": string, "technologies": string[] } ],
   "analysis": {
-    "score": number,
     "requirements": [ { "requirement": string, "importance": "essential" | "desirable", "status": "met" | "partial" | "missing", "evidence": string } ],
     "matchedSkills": string[],
     "missingSkills": string[],
@@ -160,7 +158,6 @@ const REVISION_OUTPUT = `Output: reply with ONLY one JSON object, with exactly t
   "experience": [ { "sourceId": string, "bullets": string[] } ],
   "projects": [ { "sourceId": string, "description": string, "technologies": string[] } ],
   "analysis": {
-    "score": number,
     "requirements": [ { "requirement": string, "importance": "essential" | "desirable", "status": "met" | "partial" | "missing", "evidence": string } ],
     "matchedSkills": string[],
     "missingSkills": string[],

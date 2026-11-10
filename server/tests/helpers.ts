@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import JSZip from 'jszip';
@@ -84,13 +85,19 @@ export const CV_LINES = [
   'English (Fluent), French (Basic)',
 ];
 
+const requestSchema = z.object({
+  model: z.string(),
+  messages: z.array(z.object({ role: z.string(), content: z.string() })),
+  response_format: z.object({ type: z.string() }).optional(),
+});
+
 export interface MockAi {
   url: string;
-  requests: { headers: Record<string, unknown>; body: any }[];
+  requests: { headers: Record<string, unknown>; body: z.infer<typeof requestSchema> }[];
   close(): Promise<void>;
 }
 
-type Reply = { status?: number; content?: string; raw?: unknown };
+type Reply = { status?: number; content?: string; raw?: unknown; bodyDelayMs?: number };
 
 /** A local OpenAI-compatible /chat/completions endpoint that plays back queued replies. */
 export async function mockAi(replies: Reply[]): Promise<MockAi> {
@@ -100,13 +107,23 @@ export async function mockAi(replies: Reply[]): Promise<MockAi> {
     let data = '';
     req.on('data', (c) => (data += c));
     req.on('end', () => {
-      requests.push({ headers: req.headers, body: JSON.parse(data || '{}') });
+      const payload: unknown = JSON.parse(data);
+      requests.push({ headers: req.headers, body: requestSchema.parse(payload) });
       const reply = queue.shift() ?? { status: 500 };
       const status = reply.status ?? 200;
       res.writeHead(status, { 'content-type': 'application/json' });
-      if (reply.raw !== undefined) res.end(JSON.stringify(reply.raw));
-      else if (status !== 200) res.end(JSON.stringify({ error: { message: 'mock failure' } }));
-      else res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: reply.content } }] }));
+      const sendBody = () => {
+        if (reply.raw !== undefined) res.end(JSON.stringify(reply.raw));
+        else if (status !== 200) res.end(JSON.stringify({ error: { message: 'mock failure' } }));
+        else res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: reply.content } }] }));
+      };
+      if (reply.bodyDelayMs) {
+        res.flushHeaders();
+        const timer = setTimeout(sendBody, reply.bodyDelayMs);
+        res.once('close', () => clearTimeout(timer));
+      } else {
+        sendBody();
+      }
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

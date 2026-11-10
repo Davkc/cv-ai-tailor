@@ -1,3 +1,4 @@
+import { scoreMatch } from '../src/shared/match.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HttpError } from '../src/errors.js';
 import { parseJsonReply } from '../src/services/ai/client.js';
@@ -15,7 +16,7 @@ const configFor = (mock: MockAi, extra: NodeJS.ProcessEnv = {}) =>
   testConfig({ AI_API_KEY: 'sk-test-key', AI_BASE_URL: mock.url, AI_MODEL: 'mock-model', ...extra });
 
 const exp = profile.experience[0]!;
-const validReply = JSON.stringify({
+const validProposal = {
   summary: 'Developer building financial web applications with TypeScript and Node.js.',
   skills: { technical: ['Node.js', 'TypeScript', 'Kafka'], soft: [] },
   experience: [{ sourceId: exp.id, bullets: ['Built REST APIs in Node.js and Express for a savings and loans platform.'] }],
@@ -29,7 +30,8 @@ const validReply = JSON.stringify({
     suggestions: [],
     missingInformation: [],
   },
-});
+};
+const validReply = JSON.stringify(validProposal);
 
 async function failure(fn: () => Promise<unknown>): Promise<HttpError> {
   try {
@@ -67,24 +69,26 @@ describe('tailoring through an OpenAI-compatible provider', () => {
     const result = await tailorCv(configFor(ai), profile, hostile);
 
     const [system, user] = ai.requests[0]!.body.messages;
-    expect(system.role).toBe('system');
-    expect(system.content).toBe(TAILOR_SYSTEM_PROMPT);
-    expect(system.content).not.toContain('IGNORE ALL PREVIOUS');
-    expect(user.content).toContain('IGNORE ALL PREVIOUS INSTRUCTIONS');
+    expect(system!.role).toBe('system');
+    expect(system!.content).toBe(TAILOR_SYSTEM_PROMPT);
+    expect(system!.content).not.toContain('IGNORE ALL PREVIOUS');
+    expect(user!.content).toContain('IGNORE ALL PREVIOUS INSTRUCTIONS');
     // The injected closing tag is stripped, so the hostile text cannot escape its data block.
-    expect(user.content.match(/<\/job_description>/g)).toHaveLength(1);
-    expect(user.content.indexOf('IGNORE ALL')).toBeLessThan(user.content.indexOf('</job_description>'));
+    expect(user!.content.match(/<\/job_description>/g)).toHaveLength(1);
+    expect(user!.content.indexOf('IGNORE ALL')).toBeLessThan(user!.content.indexOf('</job_description>'));
     expect(JSON.stringify(result.content)).not.toContain('Kubernetes');
   });
 
   it('even if the model obeys an injection, unsupported claims are removed', async () => {
-    const obedient = JSON.parse(validReply);
+    const obedient = structuredClone(validProposal);
     obedient.skills.technical.push('Kubernetes');
-    obedient.experience[0].bullets.push('Managed 40 Kubernetes clusters.');
+    obedient.experience[0]!.bullets.push('Managed 40 Kubernetes clusters.');
     obedient.analysis.score = 100;
     ai = await mockAi([{ content: JSON.stringify(obedient) }]);
     const result = await tailorCv(configFor(ai), profile, job);
     expect(JSON.stringify(result.content)).not.toContain('Kubernetes');
+    expect(result.analysis.score).toBe(scoreMatch(job, result.content).score);
+    expect(result.analysis.score).toBeLessThan(100);
     expect(result.analysis.flags.length).toBeGreaterThan(0);
   });
 
@@ -106,14 +110,15 @@ describe('tailoring through an OpenAI-compatible provider', () => {
   it.each([
     [401, 'ai_auth'],
     [404, 'ai_not_found'],
+    [400, 'ai_request_rejected'],
     [429, 'ai_rate_limited'],
     [500, 'ai_provider_error'],
   ])('maps provider HTTP %i to %s', async (status, code) => {
-    ai = await mockAi([{ status }, { status }]);
+    ai = await mockAi([{ status }, { status }, { status }]);
     const err = await failure(() => tailorCv(configFor(ai!), profile, job));
     expect(err.code).toBe(code);
-    // Overload and rate-limit errors get one more try; a bad key or model name does not.
-    expect(ai.requests).toHaveLength(status === 429 || status === 500 ? 2 : 1);
+    // Overload and rate-limit errors get two more tries; a bad key or model name does not.
+    expect(ai.requests).toHaveLength(status === 429 || status === 500 ? 3 : 1);
     expect(err.message).not.toContain('sk-test-key');
   });
 
@@ -134,10 +139,11 @@ describe('tailoring through an OpenAI-compatible provider', () => {
     expect((await failure(() => tailorCv(config, profile, job))).code).toBe('ai_unreachable');
   });
 
-  it('times out slow providers', async () => {
-    ai = await mockAi([]);
-    const config = configFor(ai, { AI_TIMEOUT_MS: '1' });
-    expect(['ai_timeout', 'ai_provider_error']).toContain((await failure(() => tailorCv(config, profile, job))).code);
+  it('applies the overall deadline to slow response bodies', async () => {
+    ai = await mockAi([{ content: validReply, bodyDelayMs: 5_000 }]);
+    const config = configFor(ai, { AI_TIMEOUT_MS: '10000', AI_TOTAL_TIMEOUT_MS: '250' });
+    expect((await failure(() => tailorCv(config, profile, job))).code).toBe('ai_timeout');
+    expect(ai.requests).toHaveLength(1);
   });
 });
 
@@ -171,7 +177,8 @@ describe('other AI calls', () => {
     const result = await regenerateSummary(configFor(ai), profile, job, profile.summary);
     expect(result.generatedBy).toBe('ai');
     expect(result.warnings[0]).toContain('15');
-    expect(ai.requests[0]!.body.messages[1].content).toContain('<current_summary>');
+    expect(result.summary).toBe(profile.summary);
+    expect(ai.requests[0]!.body.messages[1]!.content).toContain('<current_summary>');
   });
 
   it('normalises an AI-extracted profile', async () => {
@@ -190,7 +197,7 @@ describe('other AI calls', () => {
     expect(result.profile.contact).toMatchObject({ fullName: 'Jordan Example', phone: '' });
     expect(result.profile.experience[0]!.id).toBeTruthy();
     expect(result.profile.skills).toEqual({ technical: ['TypeScript'], soft: [] });
-    expect(ai.requests[0]!.body.messages[1].content).toContain('<cv_text>');
+    expect(ai.requests[0]!.body.messages[1]!.content).toContain('<cv_text>');
   });
 });
 

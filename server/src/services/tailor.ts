@@ -1,3 +1,4 @@
+import { extractKeywords } from '../shared/match.js';
 import { withMatchScore } from './matchAnalysis.js';
 import { z } from 'zod';
 import { aiConfigured, type Config } from '../config.js';
@@ -31,7 +32,9 @@ import { demoTailor } from './demo.js';
 import { detectLayout, parseCvHeuristically } from './heuristicParser.js';
 import { normalizeProfile } from './normalizeProfile.js';
 import { renderCvPdfWithInfo } from './pdf.js';
-import { applyRefinement, applySafeguards, profileFacts } from './safeguards.js';
+import { applyRefinement, applySafeguards, containsTerm, profileFacts } from './safeguards.js';
+
+const jobKeywords = (job: Job) => extractKeywords(job).map(({ keyword }) => keyword);
 
 export type Generator = 'ai' | 'demo';
 
@@ -51,7 +54,7 @@ export async function tailorCv(config: Config, profile: Profile, job: Job, layou
     user: tailorUserPrompt(profile, job),
     schema: aiTailorSchema,
   });
-  const { content, analysis } = applySafeguards(profile, data, { layout, instructions: job.instructions });
+  const { content, analysis } = applySafeguards(profile, data, { layout, instructions: job.instructions, jobTerms: jobKeywords(job) });
   return {
     content,
     analysis: withMatchScore(job, content, analysis),
@@ -109,7 +112,7 @@ export async function refineCv(
     user: refineUserPrompt(profile, job, { ...cv, sectionOrder: layout.sections.map((s) => s.key) }, instruction, styleSample),
     schema: aiRefineSchema,
   });
-  const refined = applyRefinement(profile, current, instruction, data);
+  const refined = applyRefinement(profile, current, instruction, data, jobKeywords(job));
   return {
     ...refined,
     analysis: withMatchScore(job, refined.content, refined.analysis),
@@ -186,12 +189,15 @@ export async function regenerateSummary(
     user: summaryUserPrompt(profile, job, currentSummary),
     schema: aiSummarySchema,
   });
-  const unverified = profileFacts(profile).unverifiedNumbers(data.summary);
+  const facts = profileFacts(profile);
+  const unverified = facts.unverifiedNumbers(data.summary);
+  const unsupported = jobKeywords(job).filter((term) => !facts.supports(term) && containsTerm(data.summary.toLowerCase(), term));
+  const claims = [...unverified, ...unsupported];
   return {
-    summary: data.summary,
+    summary: claims.length ? profile.summary : data.summary,
     generatedBy: 'ai',
-    warnings: unverified.length
-      ? [`The new summary mentions a figure (${unverified.join(', ')}) that is not in your master CV. Check it before sending.`]
+    warnings: claims.length
+      ? ['Kept your master CV summary because the rewrite included unsupported claims: ' + claims.join(', ') + '.']
       : [],
   };
 }

@@ -16,7 +16,7 @@ function proposal(overrides: Partial<AiTailorOutput> = {}): AiTailorOutput {
     ],
     projects: [{ sourceId: project.id, description: 'Personal finance app that categorises spending.', technologies: ['React', 'Kafka'] }],
     analysis: {
-      score: 71.6, requirements: [],
+      requirements: [],
       matchedSkills: ['Node.js', 'TypeScript', 'Kubernetes'],
       missingSkills: ['Kafka'],
       relevantExperience: ['Software Developer at Example Fintech Ltd'],
@@ -126,14 +126,14 @@ describe('applySafeguards', () => {
     expect(content.projects[0]).toMatchObject({ name: project.name, technologies: ['React'] });
   });
 
-  it('only reports keywords that are really in the CV, and rounds the score', () => {
+  it('only reports keywords that are really in the CV', () => {
     const { analysis } = applySafeguards(profile, proposal());
     expect(analysis.keywordsIncluded).toEqual(['Node.js', 'REST']);
-    expect(analysis.score).toBe(72);
   });
 
-  it('flags an unverifiable figure in the summary', () => {
-    const { analysis } = applySafeguards(profile, proposal({ summary: 'Developer with 12 years of experience.' }));
+  it('falls back to the candidate summary when the proposal adds an unverifiable figure', () => {
+    const { content, analysis } = applySafeguards(profile, proposal({ summary: 'Developer with 12 years of experience.' }));
+    expect(content.summary).toBe(profile.summary);
     expect(analysis.flags.some((f) => f.includes('summary') && f.includes('12'))).toBe(true);
   });
 });

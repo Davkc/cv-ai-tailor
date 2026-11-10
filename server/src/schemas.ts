@@ -353,7 +353,6 @@ export const aiTailorSchema = z.object({
     .max(40)
     .default([]),
   analysis: z.object({
-    score: z.coerce.number().min(0).max(100),
     requirements: z
       .array(z.unknown())
       .default([])

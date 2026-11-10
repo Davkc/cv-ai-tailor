@@ -119,7 +119,7 @@ describe('AI documents', () => {
     expect(res.body.letter).toContain('Dear Hiring Manager');
     expect(res.body.warnings.join(' ')).toMatch(/12/);
     expect(res.body.warnings.join(' ')).toMatch(/Kubernetes/);
-    const sent = ai.requests[0]!.body.messages[1].content as string;
+    const sent = ai.requests[0]!.body.messages[1]!.content;
     expect(sent).toContain('<tailored_cv>');
     expect(sent).toContain('<tone>\nwarm');
   });

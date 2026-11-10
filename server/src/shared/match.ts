@@ -41,7 +41,7 @@ function keywords(text: string): Set<string> {
   return found;
 }
 
-const preferred = /\b(preferred|desirable|optional|nice[- ]to[- ]have|bonus)\b/i;
+const preferred = /\b(preferred|desirable|optional|nice[- ]to[- ]have|bonus|a plus|an advantage)\b/i;
 const required = /\b(required|requirements?|essential|must[- ]have|minimum qualifications)\b/i;
 const heading = /^(?:preferred(?: qualifications| skills)?|desirable(?: skills)?|optional|nice[- ]to[- ]have|bonus|(?:minimum |required )?qualifications|required(?: skills)?|requirements?|essential(?: skills)?)\s*(?::|$)/i;
 

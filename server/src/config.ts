@@ -43,6 +43,7 @@ export interface Config {
     jsonMode: boolean;
     temperature: number | undefined;
     timeoutMs: number;
+    totalTimeoutMs: number;
     /** Pause before retrying a model that reported it is overloaded. */
     retryDelayMs: number;
   };
@@ -110,7 +111,8 @@ export function loadConfig(rawSource: NodeJS.ProcessEnv = process.env): Config {
         .filter(Boolean),
       jsonMode: source.AI_JSON_MODE !== 'false',
       temperature: Number.isFinite(temperature) ? temperature : undefined,
-      timeoutMs: num(source.AI_TIMEOUT_MS, 75_000),
+      timeoutMs: Math.min(120_000, Math.ceil(num(source.AI_TIMEOUT_MS, 30_000))),
+      totalTimeoutMs: Math.min(120_000, Math.ceil(num(source.AI_TOTAL_TIMEOUT_MS, 90_000))),
       retryDelayMs: env === 'test' ? 1 : 3000,
     },
   };

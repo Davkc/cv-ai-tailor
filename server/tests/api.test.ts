@@ -1,3 +1,4 @@
+import { scoreMatch } from '../src/shared/match.js';
 import { MongoMemoryServer } from 'mongodb-memory-server-core';
 import mongoose from 'mongoose';
 import request from 'supertest';
@@ -170,6 +171,7 @@ describe('saved versions', () => {
   it('saves, lists, loads, updates and deletes a version', async () => {
     const created = await create();
     expect(created.status).toBe(201);
+    expect(created.body.version.analysis.score).toBe(scoreMatch(job, sampleContent()).score);
     const id = created.body.version.id;
 
     const list = await request(app).get('/api/versions').set(auth());
@@ -326,7 +328,7 @@ describe('CV structure and instructions', () => {
     expect(res.status).toBe(200);
     expect(res.body.sectionsFound).toBe(3);
     expect(res.body.content.layout.sections[0].title).toBe('EDUCATION');
-    expect(res.body.analysis.score).toBe(60);
+    expect(res.body.analysis.score).toBe(scoreMatch(job, res.body.content).score);
     expect((await request(app).post('/api/tailor/restyle').set(auth()).attach('file', sample, 'sample.docx')).status).toBe(400);
     expect((await request(app).post('/api/tailor/restyle').set(auth()).field('payload', payload).attach('file', Buffer.from('x'), 's.txt')).status).toBe(415);
     expect((await request(app).post('/api/tailor/restyle').field('payload', payload).attach('file', sample, 'sample.docx')).status).toBe(401);
